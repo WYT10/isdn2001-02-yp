@@ -8,20 +8,22 @@ This first website release includes authenticated measurement ingestion, SQLite 
 
 Already created `~/mysite/flask_app.py` using PythonAnywhere's Flask setup? Keep that web app. The ZIP now includes `flask_app.py` and matches its default entry point. This project needs the whole ZIP, including the `sensorlab/` package, templates and static files; uploading only flask_app.py is insufficient.
 
-1. Open PythonAnywhere **Files**, go to your home directory `/home/YOUR_USERNAME/`, and upload **`dist/pythonanywhere-starter.zip`** from this computer. Upload the ZIP itself, without opening it in the online editor.
+1. Open PythonAnywhere **Files**, go to `/home/YOUR_USERNAME/mysite/`, and upload **`dist/pythonanywhere-starter.zip`** from this computer. Upload the ZIP itself, without opening it in the online editor. If it already appears beside `flask_app.py`, it is in the correct directory.
 2. Open **Consoles > Bash** and run:
 
 ```bash
 mkdir -p ~/mysite
-# Preserve the initial starter file before replacing it.
-if [ -f ~/mysite/flask_app.py ]; then cp -n ~/mysite/flask_app.py ~/flask_app.starter.backup.py; fi
-unzip -o ~/pythonanywhere-starter.zip -d ~/mysite
 cd ~/mysite
+# Preserve the initial starter file before replacing it.
+if [ -f flask_app.py ]; then cp -n flask_app.py ~/flask_app.starter.backup.py; fi
+unzip -o pythonanywhere-starter.zip
 python3.11 -m venv ~/.virtualenvs/sensorlab
 source ~/.virtualenvs/sensorlab/bin/activate
 pip install -r requirements.txt
 python bootstrap.py
 ```
+
+If you uploaded the ZIP to your home directory instead, use `unzip -o ~/pythonanywhere-starter.zip -d ~/mysite`. A ZIP listed by `dir` in `~/mysite` is at `~/mysite/pythonanywhere-starter.zip`; the shorter `~/pythonanywhere-starter.zip` points to a different location. Run `bootstrap.py` with the full `.py` extension after extraction and dependency installation succeed.
 
 Use Python **3.11 or newer**, matching the version shown in the **Web** tab. If your newly created app says **3.10**, change its Python version to **3.11** in Web first, then use the commands above. If you choose 3.13, use `python3.13` instead. Setup prints private admin, viewer and device keys. Save them privately: the admin/viewer keys sign into the site; the device key authenticates sensor uploads. Repeating setup preserves existing keys and data.
 
@@ -163,9 +165,9 @@ The current package passed 33 Flask/deployment tests, including starting the ext
 
 ## Firmware
 
-PlatformIO/ESP-IDF structure is retained: `src/`, `include/`, `components/`, `test/host/`, `platformio.ini` and `sdkconfig.defaults`. Application firmware has exactly three C files: `main.c` wires the application and owns settings; `wifi.c` handles scanning, reconnection and the local fallback dashboard; `flow_sensor.c` contains PCNT/capture, calculations, DSP benchmarks and synthetic tests. The public interfaces are `wifi.h` and `flow_sensor.h`.
+PlatformIO/ESP-IDF structure is retained: `src/`, `include/`, `components/`, `test/host/`, `platformio.ini` and `sdkconfig.defaults`. Application firmware has four C files: `main.c` wires the application and owns settings; `wifi.c` handles scanning, reconnection and the local fallback dashboard; `flow_sensor.c` contains PCNT/capture, calculations, DSP benchmarks and synthetic tests; `cli.c` handles bounded USB serial commands. The public interfaces are `wifi.h`, `flow_sensor.h` and `cli.h`.
 
-Edit the typed `app` initializer in `src/main.c`: `.sensor` holds GPIO, pull-up, edge capture, glitch filter, stale timeout, report interval, averaging window and calibration; `.wifi` holds credentials, retry/status intervals and nested `.fallback` settings; `.diagnostics` controls benchmarks and the separate test GPIO. Both modules copy their configuration. The current test hotspot is `ABCD` / `00000000`, WPA2-Personal, on the ESP32-S3's 2.4 GHz radio. Empty passwords select open authentication; a nonempty password selects a minimum WPA2 authentication threshold. Previous account configuration was removed. Application and hosting keys remain private.
+Edit the typed `app` initializer in `src/main.c`: `.sensor` holds GPIO, pull-up, edge capture, glitch filter, stale timeout, report interval, averaging window and calibration; `.wifi` holds credentials, retry/status intervals and nested `.fallback` settings; `.cli` controls the serial interface and default stream; `.diagnostics` controls benchmarks and the separate test GPIO. Both modules copy their configuration. The current test hotspot is `ABCD` / `00000000`, WPA2-Personal, on the ESP32-S3's 2.4 GHz radio. Empty passwords select open authentication; a nonempty password selects a minimum WPA2 authentication threshold. Previous account configuration was removed. Application and hosting keys remain private.
 
 The network task retries ABCD continuously, five seconds after each failed attempt. If it has no station IP for 60 seconds, it enables AP+STA fallback:
 
@@ -179,12 +181,13 @@ The user currently has no external antenna. Both station and AP use the same ant
 
 ZJ-S201C signal: **D10/GPIO9**, with common ground and a 3.3 V compatible signal interface. Supply the sensor according to its label. A GPIO pull-up does not level-shift a driven 5 V signal.
 
-PCNT continuously counts rising edges with a 1 microsecond glitch filter and extended counter wrap. MCPWM measures rising/falling edge times for frequency, high/low duration and duty. Normal firmware never drives D10. Reports arrive every 250 ms, with approximately a one-second rolling frequency window. `app.sensor.pulses_per_litre=0` until calibrated, so flow and volume remain null. Obtain the exact coefficient from the sensor datasheet or a known-volume collection. The configurable rolling window is bounded to 1-32 report samples.
+PCNT continuously counts rising edges with a 1 microsecond glitch filter and extended counter wrap. MCPWM measures rising/falling edge times for frequency, high/low duration and duty. Normal firmware never drives D10. Measurements update every 250 ms by default, with approximately a one-second rolling frequency window. Serial streaming starts off for readable command replies; the local dashboard keeps updating independently. `app.sensor.pulses_per_litre=0` until calibrated, so flow and volume remain null. Obtain the exact coefficient from the sensor datasheet or a known-volume collection. The configurable rolling window is bounded to 1-32 report samples.
 
 ```bash
 pio run -e seeed_xiao_esp32s3
 pio run -e seeed_xiao_esp32s3 -t upload --upload-port COM19
 pio device monitor --port COM19 --baud 115200
+python tools/serial_cli.py --port COM19 stream on
 python tools/capture_serial.py --port COM19 --seconds 30 --output output/hardware/reader.jsonl
 ```
 
@@ -201,6 +204,49 @@ The minimal official ESP-DSP v1.8.2 multiplication sources, license and attribut
 
 Before adding local HTTP, the three-file refactor passed native calculation/timing tests and both reader/selftest firmware builds. Five synthetic on-board cases passed, including 20 kHz counting across the hardware limit and stopped/stale timing checks; DSP numerical checks passed. The normal reader was restored with flash hash verification. The subsequent air test on the connected sensor counted 1900 pulses with peak rolling frequency 154 Hz, captured duty/high/low timing, and returned to zero with stale timing cleared after stopping. Hydraulic calibration remains unverified. Its latest WPA2 capture observed 95 seconds, 368 sensor reports and 12 connection attempts without an IP; continuous retries remained active. The prior open-network test also failed before obtaining an IP. No firmware HTTP upload exists yet. Before the branding change, the final 140-second local-fallback hardware run passed: AP+STA started after 60.060 seconds without an IP, all three HTTP loopback routes passed without socket errors, 547 reports continued over 136.50 seconds, and upstream retries continued beyond two minutes. The maximum observed report interval was 262.236 ms; these reports are not a hard real-time guarantee. Browser checks passed at 320/390/768/1440 px with simulated API responses. Wireless client association and calibrated water-flow accuracy remain unverified. After the rename, an 85-second on-board check confirmed SensorLab-Local starting at 60.172 seconds, all three local HTTP routes and continued reporting; the maximum observed report interval was 250.114 ms. Previous detailed captures are archived under ignored `.local/`; current evidence and limits are in `agent.md`.
 
+## USB serial commands
+
+Commands run on the board through its USB Serial/JTAG COM port at 115200 baud. Close other serial monitors before using the helper. Install pyserial with the development requirements, then run from this project:
+
+```bash
+python tools/serial_cli.py --port COM19 help
+python tools/serial_cli.py --port COM19 status
+python tools/serial_cli.py --port COM19 get
+python tools/serial_cli.py --port COM19 set report_ms 100
+python tools/serial_cli.py --port COM19 set window_samples 8
+python tools/serial_cli.py --port COM19 --watch 5 stream on
+python tools/serial_cli.py --port COM19 stream off
+python tools/serial_cli.py --port COM19 wifi status
+```
+
+For an interactive terminal, use `python -m serial.tools.miniterm COM19 115200 --eol LF --raw --echo`, then type commands and press Enter. Exit miniterm with Ctrl+]. The helper also accepts commands from Windows Command Prompt or PowerShell without editing firmware.
+
+| Command | Behavior |
+|---|---|
+| `help` | List commands and ranges |
+| `status` | Latest measurement, uptime, free heap, serial stream and revision |
+| `get` / `get NAME` | Read the current runtime settings |
+| `set report_ms N` | Report interval, integer 50-10000 ms |
+| `set window_samples N` | Averaging window, integer 1-32 reports |
+| `set pulses_per_litre N` | Calibration, finite 0-1e9 pulses/L; zero means unknown |
+| `stream on` / `stream off` | Enable/disable serial measurement output; local HTTP continues |
+| `wifi status` | Actual driver mode, AP SSID/hidden flag/channel/MAC, clients and transmit-power limit |
+| `wifi scan` | Scan in station/AP+STA mode; temporarily uses the radio off channel |
+| `wifi reconnect` | Schedule another upstream connection; unavailable in AP-only mode |
+| `wifi ap on` | Open the local AP immediately with station retries |
+| `wifi ap only` | Local AP on channel 6, with upstream station/scanning stopped |
+| `wifi auto` | Resume station retries and automatic fallback; an already opened AP stays on |
+| `benchmark` | Run the DSP microbenchmark; this can delay a report |
+| `reboot` | Restart and restore the compiled default settings |
+
+Changes are **volatile until reboot**. Set calibration only from the sensor specification or a known-volume experiment. The main task owns runtime settings, and the network task owns Wi-Fi mutations. Queued Wi-Fi requests have a separate completion response, which the helper waits for. There is no command to drive the sensor GPIO, execute a shell or erase NVS.
+
+Changing the report interval changes the telemetry rate; hardware pulse counting and edge capture continue independently. Changing the interval/window clears the rolling calculation window while preserving accumulated pulse counts. Every reading includes report interval, averaging size, calibration and config revision. Inputs are limited to 95 ASCII characters; invalid/overlong lines are discarded completely. LF, CR, CRLF, backspace and Ctrl+C cancellation are supported.
+
+If the AP is missing on a phone, run `wifi ap only`, then `wifi status`, and check for **SensorLab-Local** / **00000000** at **http://192.168.4.1**. This removes reconnect scans during discovery. It does not establish antenna/RF performance: this board currently has no external antenna. After the check, `wifi auto` resumes the normal fallback behavior.
+
+The CLI firmware was built and flashed to the serial-verified board, with all three flash regions hash-verified. On-board tests passed command round trips, invalid/overlong input rejection, 100 ms reporting with eight-report averaging, responsive commands at a ten-second report interval, stream-off cache updates, calibration round trips, numerical DSP checks and reboot restoring defaults. The automatic fallback opened after 60.101 seconds and all three HTTP loopback routes passed. AP-only/AP+STA/auto transitions passed without duplicate connection attempts. The board is left in AP-only mode, with the driver confirming the visible SSID and channel 6. Phone discovery and external dashboard access remain unverified. No new physical pulses arrived during this command test; the earlier air test remains the real sensor-signal evidence.
+
 ## Layout and Git hygiene
 
 ```text
@@ -209,8 +255,10 @@ readme.md                   Setup, API and operations
 src/main.c                  Application settings and reporting loop
 src/wifi.c                  Wi-Fi, local HTTP dashboard and AP fallback
 src/flow_sensor.c           Sensor driver, calculations and diagnostics
+src/cli.c                   Serial command parser and USB input task
 include/wifi.h              Typed Wi-Fi configuration/API
 include/flow_sensor.h       Typed sensor configuration/API
+include/cli.h               Typed command/configuration interface
 components/esp-dsp/         Minimal upstream acceleration dependency
 web/                        Flask source, templates, assets and upload example
 test/host/ test/web/        Native C and Flask/deployment tests
@@ -221,15 +269,5 @@ Git ignores credentials, databases, virtualenvs, PlatformIO output, deployment s
 
 Public repository: [WYT10/isdn2001-02-yp](https://github.com/WYT10/isdn2001-02-yp). SensorLab source is published on main at code commit `77fb43c`. The [SensorLab CI run](https://github.com/WYT10/isdn2001-02-yp/actions/runs/43994801212) passed both jobs: web/native tests, publication audit, ZIP packaging and the clean Linux firmware build. The branded firmware built locally and passed the on-board check. Both jobs passed for the earlier code commit `40a4671`. GitHub Actions supplies the PythonAnywhere ZIP as an artifact. The final documentation update records the separate on-board and browser results.
 
-Local Git initialization succeeded, but this session has read-only access to Git metadata, so it could not configure the local remote or commit locally. To link this already initialized folder, which currently has no local commits or remote, run once in your own terminal from the project root:
-
-```bash
-git remote add origin https://github.com/WYT10/isdn2001-02-yp.git
-git fetch origin
-git reset --mixed origin/main
-git branch --set-upstream-to=origin/main main
-git status
-```
-
-The mixed reset updates the index and branch while preserving working files. Inspect git status before future commits. Firmware version `0.1.0` is explicitly set in the root CMakeLists.txt, so building also works from a source ZIP or an empty local Git history.
+The local checkout is linked to origin/main after the earlier workspace restriction was lifted. Source edits can be committed and pushed using the normal Git workflow. Build output, captures, instance configuration and research databases remain ignored. Firmware version `0.1.0` is explicitly set in the root CMakeLists.txt, so building also works from a source ZIP or an empty local Git history.
 

@@ -27,3 +27,11 @@ typedef struct {
 /* The ESP32 station is a singleton. Settings are copied before the task starts. */
 esp_err_t wifi_start(const wifi_settings_t *settings);
 esp_err_t wifi_publish_reading(const char *json, size_t length);
+
+typedef enum {
+    WIFI_ACTION_SCAN, WIFI_ACTION_RECONNECT, WIFI_ACTION_AP_ON,
+    WIFI_ACTION_AP_ONLY, WIFI_ACTION_AUTO, WIFI_ACTION_STATUS,
+} wifi_action_t;
+
+/* Mutations are queued and performed exclusively by the network task. */
+esp_err_t wifi_request(wifi_action_t action);

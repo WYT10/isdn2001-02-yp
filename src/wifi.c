@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 
@@ -22,6 +23,7 @@
 #define NET_TRY(call) do { esp_err_t err = (call); if (err != ESP_OK) return err; } while (0)
 
 static EventGroupHandle_t events;
+static QueueHandle_t actions;
 static wifi_settings_t settings;
 static bool running;
 static httpd_handle_t server;
@@ -31,10 +33,62 @@ static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
 static struct {
     bool station_connected;
     bool ap_active;
+    bool ready;
+    bool ap_only;
     char station_ip[16];
     char reading[WIFI_READING_CAPACITY];
     int64_t reading_us;
 } state;
+static void escape_ssid(const unsigned char *input, char output[32 * 6 + 1]);
+
+esp_err_t wifi_request(wifi_action_t action)
+{
+    if ((unsigned)action > WIFI_ACTION_STATUS) return ESP_ERR_INVALID_ARG;
+    if (!actions) return ESP_ERR_INVALID_STATE;
+    return xQueueSend(actions, &action, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+static void wifi_log_status(void)
+{
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    wifi_config_t config = {0};
+    wifi_sta_list_t clients = {0};
+    uint8_t channel = 0, mac[6] = {0};
+    wifi_second_chan_t secondary;
+    int8_t power = 0;
+    bool ready, active, connected, ap_only;
+    char ip[16];
+    portENTER_CRITICAL(&state_lock);
+    ready = state.ready;
+    active = state.ap_active;
+    connected = state.station_connected;
+    ap_only = state.ap_only;
+    memcpy(ip, state.station_ip, sizeof(ip));
+    portEXIT_CRITICAL(&state_lock);
+    esp_err_t result = esp_wifi_get_mode(&mode);
+    if (result == ESP_OK) {
+        esp_wifi_get_channel(&channel, &secondary);
+        esp_wifi_get_max_tx_power(&power);
+    }
+    if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
+        esp_wifi_get_config(WIFI_IF_AP, &config);
+        esp_wifi_get_mac(WIFI_IF_AP, mac);
+        esp_wifi_ap_get_sta_list(&clients);
+    }
+    char ssid[32 * 6 + 1];
+    escape_ssid(config.ap.ssid, ssid);
+    printf("{\"type\":\"wifi_status\",\"ready\":%s,\"mode\":\"%s\","
+           "\"station_connected\":%s,\"station_ip\":\"%s\",\"ap_active\":%s,"
+           "\"ap_only\":%s,\"ap_ssid\":\"%s\",\"ap_hidden\":%s,\"channel\":%u,"
+           "\"ap_auth_mode\":%d,\"ap_clients\":%u,\"beacon_tu\":%u,\"max_tx_power_dbm\":%.2f,"
+           "\"ap_mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"code\":%d}\n",
+           ready ? "true" : "false", mode == WIFI_MODE_AP ? "ap" :
+           mode == WIFI_MODE_APSTA ? "ap_sta" : mode == WIFI_MODE_STA ? "sta" : "off",
+           connected ? "true" : "false", connected ? ip : "", active ? "true" : "false",
+           ap_only ? "true" : "false", ssid, config.ap.ssid_hidden ? "true" : "false",
+           channel, config.ap.authmode, (unsigned)clients.num, config.ap.beacon_interval,
+           power * 0.25, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], result);
+}
 
 /* Self-contained: local clients need neither a CDN nor Internet access. */
 static const char dashboard[] =
@@ -151,13 +205,14 @@ static esp_err_t favicon_get(httpd_req_t *request)
 static esp_err_t status_get(httpd_req_t *request)
 {
     char reading[WIFI_READING_CAPACITY], station_ip[16];
-    bool connected, ap_active;
+    bool connected, ap_active, ap_only;
     int64_t reading_us;
     portENTER_CRITICAL(&state_lock);
     memcpy(reading, state.reading, sizeof(reading));
     memcpy(station_ip, state.station_ip, sizeof(station_ip));
     connected = state.station_connected;
     ap_active = state.ap_active;
+    ap_only = state.ap_only;
     reading_us = state.reading_us;
     portEXIT_CRITICAL(&state_lock);
 
@@ -180,10 +235,10 @@ static esp_err_t status_get(httpd_req_t *request)
     int length = snprintf(body, sizeof(body),
         "{\"network\":{\"station_connected\":%s,\"ssid\":\"%s\",\"station_ip\":%s,"
         "\"rssi_dbm\":%s,\"ap_active\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":%s,"
-        "\"ap_clients\":%u},\"reading_age_ms\":%s,\"reading\":%s}",
+        "\"ap_clients\":%u,\"ap_only\":%s},\"reading_age_ms\":%s,\"reading\":%s}",
         connected ? "true" : "false", target_ssid_json, address, rssi,
         ap_active ? "true" : "false", ap_ssid_json, ap_ip,
-        (unsigned)clients.num, age, reading[0] ? reading : "null");
+        (unsigned)clients.num, ap_only ? "true" : "false", age, reading[0] ? reading : "null");
     if (length < 0 || (size_t)length >= sizeof(body))
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Status too large");
     response_headers(request, "application/json");
@@ -268,6 +323,10 @@ static void on_network_event(void *context, esp_event_base_t base, int32_t id, v
         printf("{\"type\":\"wifi\",\"status\":\"disconnected\",\"reason\":%d}\n",
                ((wifi_event_sta_disconnected_t *)data)->reason);
         xEventGroupSetBits(events, DISCONNECTED);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_STOP) {
+        portENTER_CRITICAL(&state_lock);
+        state.station_connected = false;
+        portEXIT_CRITICAL(&state_lock);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = data;
         char ip[16];
@@ -384,6 +443,32 @@ static esp_err_t initialise_network(void)
     return esp_wifi_start();
 }
 
+static esp_err_t activate_ap(bool only)
+{
+    if (!ap_interface) return ESP_ERR_INVALID_STATE;
+    NET_TRY(esp_wifi_set_mode(only ? WIFI_MODE_AP : WIFI_MODE_APSTA));
+    wifi_config_t config = {
+        .ap = {
+            .ssid_len = strlen(settings.fallback.ssid),
+            .ssid_hidden = 0,
+            .channel = settings.fallback.channel,
+            .authmode = WIFI_AUTH_WPA2_PSK,
+            .pairwise_cipher = WIFI_CIPHER_TYPE_CCMP,
+            .max_connection = settings.fallback.max_clients,
+            .beacon_interval = 100,
+            .pmf_cfg = {.required = false},
+        },
+    };
+    memcpy(config.ap.ssid, settings.fallback.ssid, strlen(settings.fallback.ssid));
+    memcpy(config.ap.password, settings.fallback.password, strlen(settings.fallback.password));
+    NET_TRY(esp_wifi_set_config(WIFI_IF_AP, &config));
+    wifi_config_t actual;
+    NET_TRY(esp_wifi_get_config(WIFI_IF_AP, &actual));
+    if (actual.ap.ssid_len != config.ap.ssid_len || actual.ap.ssid_hidden ||
+        memcmp(actual.ap.ssid, config.ap.ssid, config.ap.ssid_len)) return ESP_FAIL;
+    return ESP_OK;
+}
+
 static void network_task(void *context)
 {
     (void)context;
@@ -409,13 +494,17 @@ static void network_task(void *context)
         vTaskDelete(NULL);
         return;
     }
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    portENTER_CRITICAL(&state_lock);
+    state.ready = true;
+    portEXIT_CRITICAL(&state_lock);
     int64_t wait_started_us = esp_timer_get_time(), last_status_us = wait_started_us;
     err = scan_networks();
     if (err != ESP_OK)
         printf("{\"type\":\"wifi_scan\",\"status\":\"error\",\"code\":%d}\n", err);
     unsigned attempts = 0;
     int64_t next_connect_us = esp_timer_get_time(), next_fallback_us = 0;
-    bool ap_started = false, checked_server = false;
+    bool ap_started = false, checked_server = false, ap_only = false;
     while (true) {
         EventBits_t bits = xEventGroupWaitBits(events, CONNECTED | DISCONNECTED | LOST_IP,
                                               pdTRUE, pdFALSE, pdMS_TO_TICKS(250));
@@ -423,17 +512,63 @@ static void network_task(void *context)
         portENTER_CRITICAL(&state_lock);
         bool connected = state.station_connected;
         portEXIT_CRITICAL(&state_lock);
+        wifi_action_t action;
+        if (xQueueReceive(actions, &action, 0) == pdTRUE) {
+            static const char *const names[] = {"scan", "reconnect", "ap_on", "ap_only", "auto", "status"};
+            if (action == WIFI_ACTION_STATUS) {
+                err = ESP_OK;
+            } else if (action == WIFI_ACTION_AP_ON || action == WIFI_ACTION_AP_ONLY) {
+                bool resuming_station = ap_only && action == WIFI_ACTION_AP_ON;
+                err = activate_ap(action == WIFI_ACTION_AP_ONLY);
+                if (err == ESP_OK) {
+                    ap_started = true;
+                    ap_only = action == WIFI_ACTION_AP_ONLY;
+                    if (ap_only) { connected = false; next_connect_us = 0; }
+                    else if (resuming_station && !connected) next_connect_us = now;
+                }
+            } else if (action == WIFI_ACTION_AUTO) {
+                bool resuming_station = ap_only;
+                err = esp_wifi_set_mode(ap_started ? WIFI_MODE_APSTA : WIFI_MODE_STA);
+                if (err == ESP_OK) {
+                    ap_only = false;
+                    if (resuming_station && !connected) next_connect_us = now;
+                }
+            } else if (action == WIFI_ACTION_RECONNECT) {
+                err = ap_only ? ESP_ERR_INVALID_STATE : esp_wifi_disconnect();
+                if (!ap_only && (err == ESP_OK || err == ESP_ERR_WIFI_NOT_CONNECT)) {
+                    err = ESP_OK;
+                    connected = false;
+                    next_connect_us = now + (int64_t)settings.retry_delay_ms * 1000;
+                }
+            } else {
+                /* Pause a pending connection so the driver can run a full scan. */
+                if (!connected && !ap_only) {
+                    if (esp_wifi_disconnect() == ESP_OK)
+                        xEventGroupWaitBits(events, DISCONNECTED, pdTRUE, pdFALSE, pdMS_TO_TICKS(1000));
+                }
+                err = scan_networks();
+                if (!connected && !ap_only)
+                    next_connect_us = esp_timer_get_time() + (int64_t)settings.retry_delay_ms * 1000;
+            }
+            portENTER_CRITICAL(&state_lock);
+            state.ap_only = ap_only;
+            if (ap_only) state.station_connected = false;
+            portEXIT_CRITICAL(&state_lock);
+            wifi_log_status();
+            printf("{\"type\":\"wifi_command\",\"action\":\"%s\",\"status\":\"%s\",\"code\":%d}\n",
+                   names[action], err == ESP_OK ? "ok" : "error", err);
+        }
         if (connected) {
             wait_started_us = 0;
             attempts = 0;
             next_connect_us = 0;
-        } else {
+        } else if (!ap_only) {
             if (!wait_started_us) wait_started_us = now;
             uint32_t delay_ms = ap_started ? settings.fallback.retry_delay_ms : settings.retry_delay_ms;
             if (bits & DISCONNECTED) next_connect_us = now + (int64_t)delay_ms * 1000;
             if (settings.fallback.enabled && !ap_started && now >= next_fallback_us &&
                 now - wait_started_us >= (int64_t)settings.fallback.after_ms * 1000) {
-                err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+                err = activate_ap(false);
                 if (err == ESP_OK) {
                     ap_started = true;
                     esp_netif_ip_info_t info = {0};
@@ -441,6 +576,7 @@ static void network_task(void *context)
                     printf("{\"type\":\"wifi_fallback\",\"status\":\"started\",\"ssid\":\"%s\","
                            "\"ip\":\"" IPSTR "\",\"wait_ms\":%" PRId64 ",\"mode\":\"ap_sta\"}\n",
                            ap_ssid_json, IP2STR(&info.ip), (now - wait_started_us) / 1000);
+                    wifi_log_status();
                 } else {
                     next_fallback_us = now + 5000000;
                     printf("{\"type\":\"wifi_fallback\",\"status\":\"error\",\"code\":%d}\n", err);
@@ -500,9 +636,13 @@ esp_err_t wifi_start(const wifi_settings_t *config)
         return ESP_ERR_INVALID_ARG;
     if (running) return ESP_ERR_INVALID_STATE;
     settings = *config;
+    actions = xQueueCreate(4, sizeof(wifi_action_t));
+    if (!actions) return ESP_ERR_NO_MEM;
     running = true;
     if (xTaskCreate(network_task, "wifi", 8192, NULL, 3, NULL) != pdPASS) {
         running = false;
+        vQueueDelete(actions);
+        actions = NULL;
         printf("{\"type\":\"wifi\",\"status\":\"task_error\"}\n");
         return ESP_ERR_NO_MEM;
     }

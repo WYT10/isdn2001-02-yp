@@ -32,8 +32,8 @@ def main():
     main_source = (ROOT / "src" / "main.c").read_text()
     assert re.search(r'\.ssid\s*=\s*"ABCD"', main_source)
     assert re.search(r'\.password\s*=\s*"00000000"', main_source)
-    assert {p.name for p in (ROOT / "src").glob("*.c")} == {"main.c", "wifi.c", "flow_sensor.c"}
-    assert {p.name for p in (ROOT / "include").glob("*.h")} == {"wifi.h", "flow_sensor.h"}
+    assert {p.name for p in (ROOT / "src").glob("*.c")} == {"main.c", "wifi.c", "flow_sensor.c", "cli.c"}
+    assert {p.name for p in (ROOT / "include").glob("*.h")} == {"wifi.h", "flow_sensor.h", "cli.h"}
     for name in ("flow_reader", "flow_wifi", "flow_config", "wifi_config", "flow_math", "flow_bench"):
         for folder, suffix in (("src", ".c"), ("include", ".h")):
             assert not (ROOT / folder / (name + suffix)).exists(), "Obsolete module remains: " + name
@@ -51,7 +51,7 @@ def main():
         with zipfile.ZipFile(archive_path) as archive:
             assert set(archive.namelist()) == set(expected), "ZIP contains unexpected or missing files"
             assert all(archive.read(name) == body for name, body in expected.items()), "ZIP is stale; rebuild it"
-    print(f"Project audit passed: {len(files)} authored files; three firmware C files; exactly agent.md/readme.md; no old Wi-Fi account material.")
+    print(f"Project audit passed: {len(files)} authored files; four firmware C files including CLI; exactly agent.md/readme.md; no old Wi-Fi account material.")
     print("Upload release:", release)
 
 
