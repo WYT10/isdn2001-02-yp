@@ -39,11 +39,11 @@ static struct {
 /* Self-contained: local clients need neither a CDN nor Internet access. */
 static const char dashboard[] =
 "<!doctype html>\n"
-"<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FlowLab Local</title>\n"
+"<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>SensorLab Local</title>\n"
 "<style>\n"
 ":root{color-scheme:dark;--bg:#10191d;--panel:#19272c;--line:#304348;--text:#edf5ed;--muted:#acc1bc;--green:#b5efb5;--amber:#ffcc86}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;padding:36px 24px;margin:auto}header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:28px}.eyebrow{color:var(--green);font-size:12px;letter-spacing:.12em;text-transform:uppercase}h1{font-size:clamp(28px,5vw,42px);letter-spacing:-.04em;margin:4px 0}h2{font-size:18px;margin:0 0 16px}p{margin:6px 0;color:var(--muted)}.badge{border:1px solid var(--line);border-radius:24px;padding:8px 14px;font-size:13px;white-space:nowrap;color:var(--amber)}.badge.live{color:var(--green)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px}.label{font-size:13px;color:var(--muted)}.value{font-size:clamp(24px,3.8vw,36px);font-variant-numeric:tabular-nums;letter-spacing:-.04em;overflow-wrap:anywhere;margin:8px 0 4px}.unit{font-size:13px;color:var(--muted)}.note{font-size:12px;color:var(--muted);min-height:18px}.panels{display:grid;grid-template-columns:1.6fr 1fr;gap:14px;margin-top:14px}svg{display:block;width:100%;height:160px;border-bottom:1px solid var(--line)}polyline{stroke:var(--green);stroke-width:2;vector-effect:non-scaling-stroke;fill:none}.chart-note{font-size:12px;margin-top:12px}dl{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0}dt{color:var(--muted);font-size:12px}dd{margin:2px 0 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}footer{margin-top:24px;font-size:13px;color:var(--muted)}a{color:var(--green)}#message{margin:0 0 20px;padding:12px 16px;border:1px solid var(--line);border-radius:12px;color:var(--muted)}@media(max-width:760px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panels{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column;gap:12px}main{padding:24px 16px}.card,.panel{padding:18px}}@media(prefers-reduced-motion:no-preference){.badge{transition:color .2s}}\n"
 "</style></head><body><main>\n"
-"<header><div><div class=\"eyebrow\">ZJ-S201C / XIAO ESP32-S3</div><h1>FlowLab Local</h1><p>Live pulse readings, directly from your board.</p></div><div id=\"badge\" class=\"badge\" role=\"status\">Connecting</div></header>\n"
+"<header><div><div class=\"eyebrow\">ZJ-S201C / XIAO ESP32-S3</div><h1>SensorLab Local</h1><p>Live pulse readings, directly from your board.</p></div><div id=\"badge\" class=\"badge\" role=\"status\">Connecting</div></header>\n"
 "<div id=\"message\" role=\"status\">Waiting for a reading from the board.</div>\n"
 "<section class=\"grid\" aria-label=\"Latest measurements\">\n"
 "<article class=\"card\"><div class=\"label\">Pulse frequency</div><div class=\"value\" id=\"frequency\">--</div><div class=\"unit\">Hz</div><div class=\"note\">Rolling measurement window</div></article>\n"
@@ -139,7 +139,7 @@ static esp_err_t dashboard_get(httpd_req_t *request)
 static esp_err_t health_get(httpd_req_t *request)
 {
     response_headers(request, "application/json");
-    return httpd_resp_sendstr(request, "{\"status\":\"ok\",\"service\":\"flowlab-local\"}");
+    return httpd_resp_sendstr(request, "{\"status\":\"ok\",\"service\":\"sensorlab-local\"}");
 }
 
 static esp_err_t favicon_get(httpd_req_t *request)
@@ -470,7 +470,7 @@ static void network_task(void *context)
         if (server && !checked_server) {
             bool health = check_route("/healthz", "\"status\":\"ok\"");
             bool status = check_route("/api/status", "\"reading\":{\"type\":\"flow\"");
-            bool page = check_route("/", "FlowLab Local");
+            bool page = check_route("/", "SensorLab Local");
             printf("{\"type\":\"local_http_check\",\"scope\":\"board_loopback\","
                    "\"health\":%s,\"status\":%s,\"page\":%s,\"pass\":%s}\n",
                    health ? "true" : "false", status ? "true" : "false",

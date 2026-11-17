@@ -77,7 +77,7 @@ def export_readings():
     for row in rows[:limit]:
         writer.writerow([row[column] for column in columns])
     response = Response(output.getvalue(), mimetype="text/csv")
-    response.headers["Content-Disposition"] = 'attachment; filename="flowlab-readings.csv"'
+    response.headers["Content-Disposition"] = 'attachment; filename="sensorlab-readings.csv"'
     response.headers["X-Has-More"] = str(len(rows) > limit).lower()
     response.headers["X-Next-After-Id"] = str(rows[min(len(rows), limit) - 1]["id"] if rows else cursor)
     return response

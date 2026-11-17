@@ -42,7 +42,7 @@ def main():
     ignore = (ROOT / ".gitignore").read_text().splitlines()
     for item in (".pio/", ".local/", ".venv/", "output/", "dist/", "web/instance/", "*.sqlite3", "**/*.md", "!/agent.md", "!/readme.md"):
         assert item in ignore, "Missing ignore rule: " + item
-    spec = importlib.util.spec_from_file_location("flowlab_deploy", ROOT / "tools" / "deploy_pythonanywhere.py")
+    spec = importlib.util.spec_from_file_location("sensorlab_deploy", ROOT / "tools" / "deploy_pythonanywhere.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     expected, release = module.sources()

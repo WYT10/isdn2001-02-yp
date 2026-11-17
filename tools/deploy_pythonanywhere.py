@@ -28,7 +28,7 @@ def sources(folder=WEB):
             continue
         relative = path.relative_to(folder)
         allowed = relative.as_posix() in TOP_LEVEL or (
-            relative.parts[0] == "flowlab" and path.suffix in SUFFIXES and "__pycache__" not in relative.parts
+            relative.parts[0] == "sensorlab" and path.suffix in SUFFIXES and "__pycache__" not in relative.parts
         )
         if not allowed:
             continue
@@ -38,7 +38,7 @@ def sources(folder=WEB):
         if path.suffix == ".py":
             compile(content, str(relative), "exec")
         files[relative.as_posix()] = content
-    if not {"app.py", "flask_app.py", "flowlab/__init__.py", "flowlab/schema.sql", "requirements.txt"} <= files.keys():
+    if not {"app.py", "flask_app.py", "sensorlab/__init__.py", "sensorlab/schema.sql", "requirements.txt"} <= files.keys():
         raise ValueError("Incomplete web source directory")
     hashes = {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}
     release = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
@@ -54,7 +54,7 @@ def bundle(destination, files):
 
 
 def http(method, url, *, token=None, data=None, content_type=None):
-    headers = {"User-Agent": "FlowLab-deploy/0.1"}
+    headers = {"User-Agent": "SensorLab-deploy/0.1"}
     if token:
         headers["Authorization"] = "Token " + token
     if content_type:
@@ -93,7 +93,7 @@ class PythonAnywhere:
         return body if status == 200 else None
 
     def put_file(self, path, content):
-        boundary = "flowlab-" + uuid.uuid4().hex
+        boundary = "sensorlab-" + uuid.uuid4().hex
         data = (f'--{boundary}\r\nContent-Disposition: form-data; name="content"; filename="source"\r\n'
                 'Content-Type: application/octet-stream\r\n\r\n').encode() + content + f"\r\n--{boundary}--\r\n".encode()
         self.call("POST", "files/path" + quote(path, safe="/"), data,

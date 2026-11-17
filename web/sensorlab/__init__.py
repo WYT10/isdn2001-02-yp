@@ -63,7 +63,7 @@ def create_app(test_config=None):
 
     @app.get("/healthz")
     def health():
-        return jsonify(status="ok", service="flowlab", version="0.1.0", release=app.config["RELEASE"])
+        return jsonify(status="ok", service="sensorlab", version="0.1.0", release=app.config["RELEASE"])
 
     @app.get("/readyz")
     def ready():

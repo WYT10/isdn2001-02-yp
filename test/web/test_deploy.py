@@ -48,7 +48,7 @@ class DeployTests(unittest.TestCase):
                 names = archive.namelist()
                 self.assertIn("app.py", names)
                 self.assertIn("flask_app.py", names)
-                self.assertIn("flowlab/schema.sql", names)
+                self.assertIn("sensorlab/schema.sql", names)
                 self.assertFalse(any("instance/" in name or name.endswith((".md", ".sqlite3", ".bin")) for name in names))
                 manifest = json.loads(archive.read("release.json"))
                 self.assertEqual(manifest["release"], release)
@@ -84,10 +84,10 @@ class DeployTests(unittest.TestCase):
     def test_official_file_api_uses_multipart_content_field(self):
         client = deploy.PythonAnywhere("researcher", "account-token", interval=0)
         with patch.object(deploy, "http", return_value=(201, b"")) as request:
-            client.put_file("/home/researcher/flowlab/app.py", b"public code")
+            client.put_file("/home/researcher/sensorlab/app.py", b"public code")
         args, kwargs = request.call_args
         self.assertEqual(args[0], "POST")
-        self.assertIn("/api/v0/user/researcher/files/path/home/researcher/flowlab/app.py", args[1])
+        self.assertIn("/api/v0/user/researcher/files/path/home/researcher/sensorlab/app.py", args[1])
         self.assertEqual(kwargs["token"], "account-token")
         self.assertIn(b'name="content"', kwargs["data"])
         self.assertIn(b"public code", kwargs["data"])
@@ -108,35 +108,35 @@ class DeployTests(unittest.TestCase):
                 deploy.health_check("researcher.pythonanywhere.com", "new")
 
     def test_failed_upload_restores_previous_files_and_preserves_data(self):
-        original = {"/home/researcher/flowlab/app.py": b"old app", "/home/researcher/flowlab/instance/research.sqlite3": b"research-data"}
+        original = {"/home/researcher/sensorlab/app.py": b"old app", "/home/researcher/sensorlab/instance/research.sqlite3": b"research-data"}
         client = FakeAPI(original, fail_at=2)
         files = {"app.py": b"new app", "new.py": b"new module", "release.json": b'{"release":"new"}'}
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaisesRegex(RuntimeError, "previous source files restored"):
-                deploy.deploy_files(client, files, "new", "/home/researcher/flowlab", "researcher.pythonanywhere.com",
+                deploy.deploy_files(client, files, "new", "/home/researcher/sensorlab", "researcher.pythonanywhere.com",
                                     Path(temp) / "snapshot", check=lambda *_: {})
         self.assertEqual(client.storage, original)
         self.assertEqual(client.reloaded, ["researcher.pythonanywhere.com"])
 
     def test_failed_health_check_rolls_back_including_release_marker(self):
-        original = {"/home/researcher/flowlab/app.py": b"old", "/home/researcher/flowlab/release.json": b'{"release":"old","files":{}}'}
+        original = {"/home/researcher/sensorlab/app.py": b"old", "/home/researcher/sensorlab/release.json": b'{"release":"old","files":{}}'}
         client = FakeAPI(original)
         def unhealthy(*_):
             raise RuntimeError("New release failed readiness")
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(RuntimeError):
                 deploy.deploy_files(client, {"app.py": b"new", "release.json": b'{"release":"new"}'}, "new",
-                                    "/home/researcher/flowlab", "researcher.pythonanywhere.com", Path(temp) / "snapshot", check=unhealthy)
+                                    "/home/researcher/sensorlab", "researcher.pythonanywhere.com", Path(temp) / "snapshot", check=unhealthy)
         self.assertEqual(client.storage, original)
         self.assertEqual(len(client.reloaded), 2)
 
     def test_unchanged_release_skips_file_upload_but_checks_running_app(self):
         digest = hashlib.sha256(b"same").hexdigest()
         manifest = json.dumps({"release": "same-release", "files": {"app.py": digest}}).encode()
-        client = FakeAPI({"/home/researcher/flowlab/release.json": manifest, "/home/researcher/flowlab/app.py": b"same"})
+        client = FakeAPI({"/home/researcher/sensorlab/release.json": manifest, "/home/researcher/sensorlab/app.py": b"same"})
         with tempfile.TemporaryDirectory() as temp:
             result = deploy.deploy_files(client, {"app.py": b"same", "release.json": manifest}, "same-release",
-                                         "/home/researcher/flowlab", "researcher.pythonanywhere.com", Path(temp) / "snapshot", check=lambda *_: {"ok": True})
+                                         "/home/researcher/sensorlab", "researcher.pythonanywhere.com", Path(temp) / "snapshot", check=lambda *_: {"ok": True})
         self.assertEqual(result["uploaded_files"], 0)
         self.assertEqual(client.writes, 0)
 

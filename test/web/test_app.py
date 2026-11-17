@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "web"))
-from flowlab import create_app
-from flowlab.db import get_db
+from sensorlab import create_app
+from sensorlab.db import get_db
 
 KEYS = {"SECRET_KEY": "s" * 32, "ADMIN_TOKEN": "a" * 32, "VIEWER_TOKEN": "v" * 32, "DEVICE_TOKEN": "d" * 32}
 
@@ -182,7 +182,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.login().status_code, 302)
         page = self.client.get("/").get_data(as_text=True)
         csrf = re.search(r'name="csrf-token" content="([^"]+)"', page).group(1)
-        self.assertIn("Follow the flow.", page)
+        self.assertIn("Follow the signal.", page)
         body = {"message": "Browser note"}
         self.assertEqual(self.client.post("/api/v1/feedback", json=body).status_code, 403)
         self.assertEqual(self.client.post("/api/v1/feedback", json=body, headers={"X-CSRF-Token": csrf}).status_code, 201)

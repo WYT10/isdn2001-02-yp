@@ -1,12 +1,12 @@
-# FlowLab
+# SensorLab
 
-XIAO ESP32-S3 water-flow firmware and a responsive Flask research dashboard for PythonAnywhere. Read [agent.md](agent.md) for agent instructions and maintained project memory. These are the only authored Markdown files in the repository.
+XIAO ESP32-S3 sensor firmware and a responsive Flask research dashboard for PythonAnywhere. The first supported sensor is the ZJ-S201C water-flow sensor. Read [agent.md](agent.md) for agent instructions and maintained project memory. These are the only authored Markdown files in the repository.
 
-This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. ESP32 HTTP uploading is the next integration step. No online deployment or physical flow accuracy is claimed yet.
+This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. ESP32 HTTP uploading is the next integration step. Actual pulse reading was confirmed by blowing air through the connected sensor. Water-flow calibration and online deployment remain to be verified.
 
 ## First upload to PythonAnywhere
 
-Already created `~/mysite/flask_app.py` using PythonAnywhere's Flask setup? Keep that web app. The ZIP now includes `flask_app.py` and matches its default entry point. This project needs the whole ZIP, including the `flowlab/` package, templates and static files; uploading only flask_app.py is insufficient.
+Already created `~/mysite/flask_app.py` using PythonAnywhere's Flask setup? Keep that web app. The ZIP now includes `flask_app.py` and matches its default entry point. This project needs the whole ZIP, including the `sensorlab/` package, templates and static files; uploading only flask_app.py is insufficient.
 
 1. Open PythonAnywhere **Files**, go to your home directory `/home/YOUR_USERNAME/`, and upload **`dist/pythonanywhere-starter.zip`** from this computer. Upload the ZIP itself, without opening it in the online editor.
 2. Open **Consoles > Bash** and run:
@@ -17,15 +17,15 @@ mkdir -p ~/mysite
 if [ -f ~/mysite/flask_app.py ]; then cp -n ~/mysite/flask_app.py ~/flask_app.starter.backup.py; fi
 unzip -o ~/pythonanywhere-starter.zip -d ~/mysite
 cd ~/mysite
-python3.11 -m venv ~/.virtualenvs/flowlab
-source ~/.virtualenvs/flowlab/bin/activate
+python3.11 -m venv ~/.virtualenvs/sensorlab
+source ~/.virtualenvs/sensorlab/bin/activate
 pip install -r requirements.txt
 python bootstrap.py
 ```
 
 Use Python **3.11 or newer**, matching the version shown in the **Web** tab. If your newly created app says **3.10**, change its Python version to **3.11** in Web first, then use the commands above. If you choose 3.13, use `python3.13` instead. Setup prints private admin, viewer and device keys. Save them privately: the admin/viewer keys sign into the site; the device key authenticates sensor uploads. Repeating setup preserves existing keys and data.
 
-3. Open **Web**, select your existing site and set **Virtualenv** to `/home/YOUR_USERNAME/.virtualenvs/flowlab`. Set **Source code** and **Working directory** to `/home/YOUR_USERNAME/mysite`.
+3. Open **Web**, select your existing site and set **Virtualenv** to `/home/YOUR_USERNAME/.virtualenvs/sensorlab`. Set **Source code** and **Working directory** to `/home/YOUR_USERNAME/mysite`.
 4. Open the **WSGI configuration file** linked in Web. The default Flask configuration should already import `from flask_app import app as application` with your mysite path. You can replace its contents with the supplied `~/mysite/wsgi.py` contents, which discovers your username automatically:
 
 ```python
@@ -51,13 +51,13 @@ After extraction, the layout is:
     bootstrap.py
     requirements.txt
     release.json
-    flowlab/             Python package, templates and static assets
+    sensorlab/             Python package, templates and static assets
     instance/            Private keys and database, created by setup/app
 ```
 
 The ZIP contains web source at its root, without credentials or databases. It does not contain an extra mysite folder. Generate it from a fresh checkout with `python tools/deploy_pythonanywhere.py bundle`.
 
-The first dashboard is empty. For a labelled demonstration, run `python -m flask --app flask_app seed-demo` in the activated Bash console. This preserves real samples and does not establish live sensor connectivity. See [PythonAnywhere's Flask/WSGI setup](https://help.pythonanywhere.com/pages/Flask/). Optional static mapping: `/static/` to `/home/YOUR_USERNAME/mysite/flowlab/static`.
+The first dashboard is empty. For a labelled demonstration, run `python -m flask --app flask_app seed-demo` in the activated Bash console. This preserves real samples and does not establish live sensor connectivity. See [PythonAnywhere's Flask/WSGI setup](https://help.pythonanywhere.com/pages/Flask/). Optional static mapping: `/static/` to `/home/YOUR_USERNAME/mysite/sensorlab/static`.
 
 ## Future updates without copy/paste
 
@@ -127,12 +127,12 @@ JSON/CSV accepts `device_id`, `since`, `until`, `after_id` and bounded `limit`. 
 
 ## Database and operation
 
-SQLite is private at `instance/flowlab.sqlite3` on the server. The app uses transactions, indexes, unique sample IDs and per-request connections. This is a starter for modest collection volume; larger studies should revisit database choice, retention and asynchronous processing before increasing load. Heavy analysis should run outside web requests.
+SQLite is private at `instance/flowlab.sqlite3` on the server. This existing database filename is retained after the SensorLab rename so collected data remains available. The app uses transactions, indexes, unique sample IDs and per-request connections. This is a starter for modest collection volume; larger studies should revisit database choice, retention and asynchronous processing before increasing load. Heavy analysis should run outside web requests.
 
 Create a consistent backup in the activated console:
 
 ```bash
-python -m flask --app app backup-db /home/YOUR_USERNAME/flowlab-backup.sqlite3
+python -m flask --app app backup-db /home/YOUR_USERNAME/sensorlab-backup.sqlite3
 ```
 
 Choose a new destination and download backups separately. Setup creates schema version 1 only when absent; unknown versions are rejected. Future migrations must preserve collected data. Browser polling is every three seconds, pauses in hidden tabs and avoids holding a hosted worker in a persistent stream.
@@ -169,7 +169,7 @@ Edit the typed `app` initializer in `src/main.c`: `.sensor` holds GPIO, pull-up,
 
 The network task retries ABCD continuously, five seconds after each failed attempt. If it has no station IP for 60 seconds, it enables AP+STA fallback:
 
-- Join **FlowLab-Local**, password **00000000**, and open **http://192.168.4.1**. If your phone warns that this network has no Internet, choose to remain connected.
+- Join **SensorLab-Local**, password **00000000**, and open **http://192.168.4.1**. If your phone warns that this network has no Internet, choose to remain connected.
 - The responsive page shows raw frequency, pulse counts, high/low time, duty cycle and calibrated values when available. It polls `/api/status` once per second; the reader itself still reports every 250 ms. `/healthz` reports local HTTP liveness.
 - Station retries continue, spaced 30 seconds after failures once fallback is active. The local AP stays on until reboot, including after station recovery. The HTTP server then also listens on the station IP.
 - The trigger is missing IP, rather than an Internet health check. AP+STA shares one radio/channel; scanning or upstream channel changes can briefly interrupt local clients. There is no Internet forwarding/NAT.
@@ -199,7 +199,7 @@ pio run -e seeed_xiao_esp32s3 -t upload --upload-port COM19
 
 The minimal official ESP-DSP v1.8.2 multiplication sources, license and attribution remain in `components/esp-dsp`. The Xtensa FPU/hardware-loop microbenchmark is not an end-to-end sampling speedup. `read_calc_format_us` excludes final USB output, can include preemption and does not measure aggregate CPU/ISR use.
 
-Before adding local HTTP, the three-file refactor passed native calculation/timing tests and both reader/selftest firmware builds. Five synthetic on-board cases passed, including 20 kHz counting across the hardware limit and stopped/stale timing checks; DSP numerical checks passed. The normal reader was restored with flash hash verification. Real sensor pulses and hydraulic calibration remain unverified. Its latest WPA2 capture observed 95 seconds, 368 sensor reports and 12 connection attempts without an IP; continuous retries remained active. The prior open-network test also failed before obtaining an IP. No firmware HTTP upload exists yet. The first local-fallback hardware run passed: AP+STA started after 60.103 seconds without an IP, all three HTTP loopback routes passed, 548 readings continued over 136.75 seconds, and upstream retries continued beyond two minutes. The maximum observed report interval was 302.514 ms during this run; these reports are not a hard real-time guarantee. Browser checks passed at 320/390/768/1440 px with simulated API responses. Wireless client association and real flow accuracy remain unverified. Previous detailed captures are archived under ignored `.local/`; current evidence and limits are in `agent.md`.
+Before adding local HTTP, the three-file refactor passed native calculation/timing tests and both reader/selftest firmware builds. Five synthetic on-board cases passed, including 20 kHz counting across the hardware limit and stopped/stale timing checks; DSP numerical checks passed. The normal reader was restored with flash hash verification. The subsequent air test on the connected sensor counted 1900 pulses with peak rolling frequency 154 Hz, captured duty/high/low timing, and returned to zero with stale timing cleared after stopping. Hydraulic calibration remains unverified. Its latest WPA2 capture observed 95 seconds, 368 sensor reports and 12 connection attempts without an IP; continuous retries remained active. The prior open-network test also failed before obtaining an IP. No firmware HTTP upload exists yet. The final local-fallback hardware run passed: AP+STA started after 60.060 seconds without an IP, all three HTTP loopback routes passed without socket errors, 547 reports continued over 136.50 seconds, and upstream retries continued beyond two minutes. The maximum observed report interval was 262.236 ms; these reports are not a hard real-time guarantee. Browser checks passed at 320/390/768/1440 px with simulated API responses. Wireless client association and calibrated water-flow accuracy remain unverified. Previous detailed captures are archived under ignored `.local/`; current evidence and limits are in `agent.md`.
 
 ## Layout and Git hygiene
 
@@ -219,4 +219,16 @@ tools/                      Build, capture, deployment and project checks
 
 Git ignores credentials, databases, virtualenvs, PlatformIO output, deployment snapshots, browser artifacts and ZIPs. Additional Markdown files are ignored; the project check enforces the two-document rule in authored source. Dependency licenses are retained.
 
-Public repository: [WYT10/isdn2001-02-yp](https://github.com/WYT10/isdn2001-02-yp). Source publication is in progress through the connected GitHub API. Local Git initialization succeeded, but this workspace makes Git metadata read-only, so remote configuration and local commits need a normal user terminal. Prepared GitHub Actions in `.github/workflows/checks.yml` run web/native tests, the publication audit, ZIP packaging and the normal firmware build. The workflow also supplies the PythonAnywhere ZIP as an artifact. Remote CI has not run yet.
+Public repository: [WYT10/isdn2001-02-yp](https://github.com/WYT10/isdn2001-02-yp). Source is published on main through the connected GitHub API. Both [GitHub Actions jobs](https://github.com/WYT10/isdn2001-02-yp/actions/runs/43993599870) passed for code commit `40a4671`: web/native tests, publication audit, ZIP packaging and a clean Linux firmware build. The run supplies the PythonAnywhere ZIP as an artifact. The final documentation update records the separate on-board and browser results.
+
+Local Git initialization succeeded, but this session has read-only access to Git metadata, so it could not configure the local remote or commit locally. To link this already initialized folder, which currently has no local commits or remote, run once in your own terminal from the project root:
+
+```bash
+git remote add origin https://github.com/WYT10/isdn2001-02-yp.git
+git fetch origin
+git reset --mixed origin/main
+git branch --set-upstream-to=origin/main main
+git status
+```
+
+The mixed reset updates the index and branch while preserving working files. Inspect git status before future commits. Firmware version `0.1.0` is explicitly set in the root CMakeLists.txt, so building also works from a source ZIP or an empty local Git history.
