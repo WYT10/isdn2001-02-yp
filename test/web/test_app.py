@@ -100,6 +100,28 @@ class AppTests(unittest.TestCase):
         self.assertEqual(retry.json["duplicates"], 2)
         self.assertEqual(len(self.rows()), 2)
 
+    def test_device_batch_metadata_is_safe_and_persists_without_calibration(self):
+        body = payload(sample(board="ESP32-WROOM", gpio=15, report_ms=250, window_samples=4,
+                              upload_dropped=3, queue_depth=2, arbitrary_private_field="hidden"), sample(4))
+        self.assertEqual(self.ingest(body).status_code, 201)
+        self.assertEqual(self.ingest(body).json["duplicates"], 2)
+        dashboard = self.client.get("/api/v1/dashboard", headers=auth("viewer")).json
+        first = dashboard["series"][0]
+        self.assertEqual(first["metadata"], {"board": "ESP32-WROOM", "gpio": 15, "report_ms": 250,
+                         "window_samples": 4, "upload_dropped": 3, "queue_depth": 2})
+        self.assertNotIn("hidden", json.dumps(dashboard))
+        self.assertIsNone(first["flow_lpm"])
+        restarted = create_app(self.config).test_client()
+        saved = restarted.get("/api/v1/readings", headers=auth()).json["items"][0]
+        self.assertEqual(saved["raw"]["arbitrary_private_field"], "hidden")
+        self.assertEqual(saved["metadata"]["gpio"], 15)
+
+    def test_dashboard_rejects_invalid_metadata_types(self):
+        self.assertEqual(self.ingest(payload(sample(gpio=True, board=42, report_ms="250",
+                                                   window_samples=999, upload_dropped=-1))).status_code, 201)
+        latest = self.client.get("/api/v1/dashboard", headers=auth("viewer")).json["latest"]
+        self.assertEqual(latest["metadata"], {})
+
     def test_conflicting_retry_rolls_back_entire_batch(self):
         self.ingest()
         response = self.ingest(payload(sample(1), sample(0, frequency_hz=999)))
@@ -182,7 +204,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.login().status_code, 302)
         page = self.client.get("/").get_data(as_text=True)
         csrf = re.search(r'name="csrf-token" content="([^"]+)"', page).group(1)
-        self.assertIn("Follow the signal.", page)
+        self.assertIn("Your sensors, connected.", page)
         body = {"message": "Browser note"}
         self.assertEqual(self.client.post("/api/v1/feedback", json=body).status_code, 403)
         self.assertEqual(self.client.post("/api/v1/feedback", json=body, headers={"X-CSRF-Token": csrf}).status_code, 201)

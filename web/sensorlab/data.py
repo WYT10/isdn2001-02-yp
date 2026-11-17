@@ -134,6 +134,18 @@ def reading_dict(row, include_raw=False):
     item["pulse"] = json.loads(item.pop("pulse_json")) if item.get("pulse_json") else None
     item.pop("pulse_json", None)
     raw = item.pop("raw_json", None)
+    source = json.loads(raw) if raw else {}
+    metadata = {}
+    board = source.get("board")
+    if isinstance(board, str) and 1 <= len(board) <= 80:
+        metadata["board"] = board
+    for name, maximum in (("gpio", 48), ("report_ms", 10000), ("window_samples", 32),
+                          ("upload_dropped", 2**63 - 1), ("queue_depth", 200),
+                          ("config_revision", 2**32 - 1)):
+        value = source.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= maximum:
+            metadata[name] = value
+    item["metadata"] = metadata
     if include_raw:
-        item["raw"] = json.loads(raw)
+        item["raw"] = source
     return item

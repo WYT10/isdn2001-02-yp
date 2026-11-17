@@ -4,6 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <time.h>
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_netif_sntp.h"
+#include "esp_mac.h"
+#include "esp_random.h"
+#include "cJSON.h"
 
 #include "esp_event.h"
 #include "esp_http_server.h"
@@ -43,6 +50,222 @@ static struct {
 } state;
 static void escape_ssid(const unsigned char *input, char output[32 * 6 + 1]);
 
+enum { CLOUD_QUEUE_SIZE = 24, CLOUD_BATCH_SIZE = 24, CLOUD_SAMPLE_SIZE = 896,
+       CLOUD_BODY_SIZE = CLOUD_BATCH_SIZE * CLOUD_SAMPLE_SIZE + 256 };
+static QueueHandle_t cloud_queue;
+static wifi_cloud_settings_t cloud_settings;
+static struct {
+    uint64_t sequence, acknowledged, dropped;
+    uint32_t failures, pending;
+    int http_status;
+    bool clock_synced, blocked;
+    int64_t last_success_us;
+    char device_id[40], boot_id[33];
+} cloud;
+
+static void cloud_status(char *output, size_t capacity)
+{
+    portENTER_CRITICAL(&state_lock);
+    snprintf(output, capacity,
+        "{\"enabled\":%s,\"device_id\":\"%s\",\"boot_id\":\"%s\","
+        "\"acknowledged\":%" PRIu64 ",\"dropped\":%" PRIu64 ",\"pending\":%" PRIu32 ","
+        "\"failures\":%" PRIu32 ",\"http_status\":%d,\"blocked\":%s,\"clock_synced\":%s,"
+        "\"last_success_uptime_us\":%" PRId64 "}",
+        cloud_queue ? "true" : "false", cloud.device_id, cloud.boot_id,
+        cloud.acknowledged, cloud.dropped, cloud.pending, cloud.failures, cloud.http_status,
+        cloud.blocked ? "true" : "false", cloud.clock_synced ? "true" : "false", cloud.last_success_us);
+    portEXIT_CRITICAL(&state_lock);
+}
+
+static void clock_sync(struct timeval *tv)
+{
+    (void)tv;
+    portENTER_CRITICAL(&state_lock);
+    cloud.clock_synced = true;
+    portEXIT_CRITICAL(&state_lock);
+}
+
+/* One producer (sensor task); never wait for the network or a queue slot. */
+static void cloud_enqueue(const char *json, size_t length)
+{
+    if (!cloud_queue) return;
+    char sample[CLOUD_SAMPLE_SIZE], timestamp[80] = "";
+    portENTER_CRITICAL(&state_lock);
+    uint64_t seq = cloud.sequence++, dropped = cloud.dropped;
+    bool synced = cloud.clock_synced;
+    portEXIT_CRITICAL(&state_lock);
+    if (synced) {
+        struct timeval tv;
+        struct tm utc;
+        gettimeofday(&tv, NULL);
+        gmtime_r(&tv.tv_sec, &utc);
+        char date[24];
+        strftime(date, sizeof(date), "%Y-%m-%dT%H:%M:%S", &utc);
+        snprintf(timestamp, sizeof(timestamp), ",\"observed_at\":\"%s.%06ldZ\"", date, (long)tv.tv_usec);
+    }
+    int n = snprintf(sample, sizeof(sample),
+        "%.*s,\"seq\":%" PRIu64 ",\"upload_dropped\":%" PRIu64 ",\"queue_depth\":%u%s}",
+        (int)length - 1, json, seq, dropped, (unsigned)uxQueueMessagesWaiting(cloud_queue), timestamp);
+    if (n <= 0 || (size_t)n >= sizeof(sample) || xQueueSend(cloud_queue, sample, 0) != pdTRUE) {
+        portENTER_CRITICAL(&state_lock);
+        ++cloud.dropped;
+        portEXIT_CRITICAL(&state_lock);
+    }
+}
+
+typedef struct { char data[384]; size_t used; } cloud_response_t;
+
+static esp_err_t cloud_response(esp_http_client_event_t *event)
+{
+    cloud_response_t *response = event->user_data;
+    if (event->event_id == HTTP_EVENT_ON_DATA && event->data_len > 0) {
+        size_t available = sizeof(response->data) - response->used - 1;
+        size_t copy = (size_t)event->data_len < available ? (size_t)event->data_len : available;
+        memcpy(response->data + response->used, event->data, copy);
+        response->used += copy;
+        response->data[response->used] = 0;
+    }
+    return ESP_OK;
+}
+
+static void cloud_task(void *argument)
+{
+    (void)argument;
+    /* Leave handshake headroom: allocate the HTTP body only after Wi-Fi has an IP. */
+    char *body = NULL;
+    char sample[CLOUD_SAMPLE_SIZE];
+    unsigned count = 0, failures = 0;
+    size_t used = 0;
+    int64_t next_attempt = 0;
+    bool sntp_started = false;
+    cloud_response_t response;
+    esp_http_client_handle_t client = NULL;
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        portENTER_CRITICAL(&state_lock);
+        bool connected = state.station_connected, blocked = cloud.blocked;
+        portEXIT_CRITICAL(&state_lock);
+        if (!connected || blocked) {
+            if (client) { esp_http_client_cleanup(client); client = NULL; }
+            if (!count) { free(body); body = NULL; }
+            continue;
+        }
+        if (!sntp_started) {
+            esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("time.cloudflare.com");
+            config.sync_cb = clock_sync;
+            sntp_started = esp_netif_sntp_init(&config) == ESP_OK;
+        }
+        int64_t now = esp_timer_get_time();
+        if (now < next_attempt) continue;
+        if (!body) {
+            body = malloc(CLOUD_BODY_SIZE);
+            if (!body) {
+                portENTER_CRITICAL(&state_lock);
+                ++cloud.failures;
+                portEXIT_CRITICAL(&state_lock);
+                puts("{\"type\":\"cloud\",\"status\":\"allocation_failed\"}");
+                next_attempt = now + 5000000;
+                continue;
+            }
+        }
+        if (!count) {
+            used = snprintf(body, CLOUD_BODY_SIZE,
+                "{\"device_id\":\"%s\",\"label\":\"%s\",\"boot_id\":\"%s\",\"samples\":[",
+                cloud.device_id, cloud_settings.label, cloud.boot_id);
+            while (count < CLOUD_BATCH_SIZE && xQueueReceive(cloud_queue, sample, 0) == pdTRUE) {
+                used += snprintf(body + used, CLOUD_BODY_SIZE - used, "%s%s", count ? "," : "", sample);
+                ++count;
+            }
+            if (!count) continue;
+            used += snprintf(body + used, CLOUD_BODY_SIZE - used, "]}");
+            portENTER_CRITICAL(&state_lock);
+            cloud.pending = count;
+            portEXIT_CRITICAL(&state_lock);
+        }
+        memset(&response, 0, sizeof(response));
+        esp_http_client_config_t config = {
+            .url = cloud_settings.url, .method = HTTP_METHOD_POST,
+            .timeout_ms = cloud_settings.timeout_ms, .crt_bundle_attach = esp_crt_bundle_attach,
+            .disable_auto_redirect = true, .event_handler = cloud_response, .user_data = &response,
+            .keep_alive_enable = true,
+            .buffer_size = 1024, .buffer_size_tx = 1024,
+        };
+        if (!client) client = esp_http_client_init(&config);
+        esp_err_t result = ESP_ERR_NO_MEM;
+        int status = 0;
+        if (client) {
+            char authorization[136];
+            snprintf(authorization, sizeof(authorization), "Bearer %s", cloud_settings.device_token);
+            esp_http_client_set_header(client, "Authorization", authorization);
+            esp_http_client_set_header(client, "Content-Type", "application/json");
+            esp_http_client_set_post_field(client, body, used);
+            result = esp_http_client_perform(client);
+            status = esp_http_client_get_status_code(client);
+        }
+        bool accepted = false;
+        cJSON *reply = cJSON_Parse(response.data);
+        cJSON *inserted = cJSON_GetObjectItemCaseSensitive(reply, "inserted");
+        cJSON *duplicates = cJSON_GetObjectItemCaseSensitive(reply, "duplicates");
+        if (result == ESP_OK && (status == 200 || status == 201) &&
+            cJSON_IsNumber(inserted) && cJSON_IsNumber(duplicates) &&
+            inserted->valuedouble >= 0 && duplicates->valuedouble >= 0 &&
+            inserted->valuedouble + duplicates->valuedouble == count) accepted = true;
+        cJSON_Delete(reply);
+        if (!accepted && client) { esp_http_client_cleanup(client); client = NULL; }
+        portENTER_CRITICAL(&state_lock);
+        cloud.http_status = status;
+        if (accepted) {
+            cloud.acknowledged += count;
+            cloud.pending = 0;
+            cloud.last_success_us = esp_timer_get_time();
+        } else {
+            ++cloud.failures;
+            if (status == 400 || status == 401 || status == 403 || status == 409 ||
+                status == 404 || status == 413 || (status >= 300 && status < 400)) cloud.blocked = true;
+        }
+        portEXIT_CRITICAL(&state_lock);
+        printf("{\"type\":\"cloud\",\"status\":\"%s\",\"http_status\":%d,\"samples\":%u,"
+               "\"queued\":%u,\"code\":%d}\n", accepted ? "acknowledged" : "retry_pending",
+               status, count, (unsigned)uxQueueMessagesWaiting(cloud_queue), result);
+        if (accepted) { count = 0; failures = 0; }
+        else if (failures < 4) ++failures;
+        uint32_t delay = accepted ? cloud_settings.batch_interval_ms : (5000U << (failures - 1));
+        if (delay > 60000) delay = 60000;
+        next_attempt = (accepted ? now : esp_timer_get_time()) + (int64_t)delay * 1000;
+    }
+}
+
+esp_err_t wifi_cloud_start(const wifi_cloud_settings_t *config)
+{
+    if (!config) return ESP_ERR_INVALID_ARG;
+    if (!config->enabled) return ESP_OK;
+    if (cloud_queue || !config->url || strncmp(config->url, "https://", 8) ||
+        !config->device_token || strlen(config->device_token) < 16 || strlen(config->device_token) > 127 ||
+        !config->label || strspn(config->label, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ ") != strlen(config->label) ||
+        !config->label[0] || strlen(config->label) > 80 || config->batch_interval_ms < 500 ||
+        config->timeout_ms < 1000 || config->build_epoch < 1704067200) return ESP_ERR_INVALID_ARG;
+    cloud_settings = *config;
+    uint8_t mac[6], random[16];
+    NET_TRY(esp_read_mac(mac, ESP_MAC_WIFI_STA));
+    esp_fill_random(random, sizeof(random));
+    snprintf(cloud.device_id, sizeof(cloud.device_id), "esp32-%02x%02x%02x%02x%02x%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    for (unsigned i = 0; i < sizeof(random); ++i) snprintf(cloud.boot_id + i * 2, 3, "%02x", random[i]);
+    time_t current_time = time(NULL);
+    if (current_time < config->build_epoch) {
+        struct timeval seed = {.tv_sec = config->build_epoch};
+        settimeofday(&seed, NULL);
+    }
+    cloud_queue = xQueueCreate(CLOUD_QUEUE_SIZE, CLOUD_SAMPLE_SIZE);
+    if (!cloud_queue) return ESP_ERR_NO_MEM;
+    if (xTaskCreate(cloud_task, "cloud", 8192, NULL, 1, NULL) != pdPASS) {
+        vQueueDelete(cloud_queue);
+        cloud_queue = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
 esp_err_t wifi_request(wifi_action_t action)
 {
     if ((unsigned)action > WIFI_ACTION_STATUS) return ESP_ERR_INVALID_ARG;
@@ -67,6 +290,10 @@ static void wifi_log_status(void)
     ap_only = state.ap_only;
     memcpy(ip, state.station_ip, sizeof(ip));
     portEXIT_CRITICAL(&state_lock);
+    char upload[448];
+    cloud_status(upload, sizeof(upload));
+    printf("{\"type\":\"cloud_status\",\"cloud\":%s,\"queued\":%u}\n", upload,
+           cloud_queue ? (unsigned)uxQueueMessagesWaiting(cloud_queue) : 0);
     esp_err_t result = esp_wifi_get_mode(&mode);
     if (result == ESP_OK) {
         esp_wifi_get_channel(&channel, &secondary);
@@ -175,6 +402,7 @@ esp_err_t wifi_publish_reading(const char *json, size_t length)
     state.reading[length] = '\0';
     state.reading_us = now;
     portEXIT_CRITICAL(&state_lock);
+    cloud_enqueue(json, length);
     return ESP_OK;
 }
 
@@ -235,14 +463,16 @@ static esp_err_t status_get(httpd_req_t *request)
     char age[32] = "null";
     if (reading[0])
         snprintf(age, sizeof(age), "%" PRId64, (esp_timer_get_time() - reading_us) / 1000);
-    char body[2048];
+    char upload[448];
+    cloud_status(upload, sizeof(upload));
+    char body[2560];
     int length = snprintf(body, sizeof(body),
         "{\"network\":{\"station_connected\":%s,\"ssid\":\"%s\",\"station_ip\":%s,"
         "\"rssi_dbm\":%s,\"ap_active\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":%s,"
-        "\"ap_clients\":%u,\"ap_only\":%s},\"reading_age_ms\":%s,\"reading\":%s}",
+        "\"ap_clients\":%u,\"ap_only\":%s},\"reading_age_ms\":%s,\"reading\":%s,\"cloud\":%s}",
         connected ? "true" : "false", target_ssid_json, address, rssi,
         ap_active ? "true" : "false", ap_ssid_json, ap_ip,
-        (unsigned)clients.num, ap_only ? "true" : "false", age, reading[0] ? reading : "null");
+        (unsigned)clients.num, ap_only ? "true" : "false", age, reading[0] ? reading : "null", upload);
     if (length < 0 || (size_t)length >= sizeof(body))
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Status too large");
     response_headers(request, "application/json");

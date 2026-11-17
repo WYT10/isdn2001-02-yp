@@ -2,7 +2,7 @@
 
 XIAO ESP32-S3 and ESP32-WROOM sensor firmware, with a responsive Flask research dashboard for PythonAnywhere. The first supported sensor is the ZJ-S201C water-flow sensor. Read [agent.md](agent.md) for agent instructions and maintained project memory. These are the only authored Markdown files in the repository.
 
-This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. ESP32 HTTP uploading is the next integration step. Actual pulse reading was confirmed by blowing air through the connected sensor. The site is live at [greenwithisd.pythonanywhere.com](https://greenwithisd.pythonanywhere.com/): public health, database readiness and the login page returned HTTP 200. Water-flow calibration and actual sensor-to-cloud delivery remain to be verified.
+This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. Optional direct ESP32 HTTPS uploading runs in a separate task with bounded buffering and retry-safe batches. Actual pulse reading was confirmed by blowing air through the connected sensor. The site is live at [greenwithisd.pythonanywhere.com](https://greenwithisd.pythonanywhere.com/): public health, database readiness and the login page returned HTTP 200. Direct WROOM-to-cloud ingestion and a physical air test are verified: the database retained 1,005 boot pulses, an 80.99838 Hz peak, 76 exact UART/cloud sample matches and stopped/stale readings. This verifies the electrical/rotor response and delivery, not water-flow accuracy. Calibration remains unknown; raw pulse frequency and timing are the primary measurements.
 
 ## First upload to PythonAnywhere
 
@@ -91,7 +91,25 @@ python tools/deploy_pythonanywhere.py check
 
 `plan` and `bundle` work offline. `auth` checks the account Files and Webapp APIs using GET only, reporting access and whether the remote release matches local source without returning source or private settings. `deploy` runs web tests, compares the release manifest, snapshots affected remote source to ignored `output/deploy/`, uploads changes, reloads and verifies the running release and database readiness. On upload or health failure it attempts source restoration and requests another reload. It never replaces instance configuration or research databases. API requests are paced for the documented rate limit.
 
-Keep subsequent source updates through the updater so its manifest stays current. Install changed requirements in the remote virtualenv before deploying a dependency update. Initial WSGI/virtualenv setup and database migrations are separate operations; source rollback does not roll back a database migration. The live site passes health/readiness/login checks. Account API access is now verified: a temporary file passed upload, exact readback and deletion, and the official Reload API succeeded with healthy release/database checks afterward. The temporary file was removed; current application source already matches the local release, so no source or database changes were needed. The provider account token remains in the ignored local settings and is separate from SensorLab application role keys. Run `auth` to check access before subsequent API deployments.
+Keep subsequent source updates through the updater so its manifest stays current. Install changed requirements in the remote virtualenv before deploying a dependency update. Initial WSGI/virtualenv setup and database migrations are separate operations; source rollback does not roll back a database migration. The live site passes health/readiness/login checks. Account API access is now verified: a temporary file passed upload, exact readback and deletion, and the official Reload API succeeded with healthy release/database checks afterward. The temporary file was removed; the current dashboard update was subsequently deployed through the same snapshot/reload workflow, preserving instance configuration and the research database. The provider account token remains in the ignored local settings and is separate from SensorLab application role keys. Run `auth` to check access before subsequent API deployments.
+
+## Direct sensor uploads
+
+Create **ignored** `.local/cloud.json` using the site's **device** key only:
+
+```json
+{"url":"https://YOUR_USERNAME.pythonanywhere.com/api/v1/readings","device_token":"YOUR_DEVICE_KEY"}
+```
+
+Build and flash normally. CMake generates a private header; no cloud key is committed, and public builds disable uploading. Private firmware images contain credentials and must stay private. Self-test builds disable uploading so synthetic waveforms cannot enter the real dataset. Network and uploader defaults live in `app.wifi` and `app.cloud` in main.c; implementation stays in wifi.c/h.
+
+The board uses CA-verified HTTPS without redirects, an ID derived from its MAC, a random boot ID and increasing sample sequence numbers. Every 250 ms report is enqueued without waiting for the network. Up to 24 reports are sent per request on a three-second schedule; the HTTPS connection is reused after success, and an unsuccessful batch is retained unchanged for deduplicated retries with 5–60 second backoff. Invalid/authentication/conflict responses block further uploads until reboot/configuration correction and are visible in `wifi status` and local `/api/status`.
+
+Buffering is **RAM only**: 24 waiting reports plus at most 24 pending reports. A full queue drops new reports and increments `upload_dropped`; sequence gaps remain visible in the chart. Reboot loses unsent reports. This starter does not provide persistent offline logging. Use `wifi status` for acknowledgements, pending/queued reports, failures, clock state and drops; no token is returned. The 2 MiB application partition starts at 0x10000; NVS remains 0x9000/0x6000 and PHY remains 0xf000/0x1000. Do not erase flash when updating.
+
+SNTP adds `observed_at` only after a confirmed time sync. Raw uptime is always retained. Dashboard lines use device elapsed time anchored to the latest server receipt per boot, preserving spacing across batches; breaks mark sequence gaps/restarts. This receipt anchor is an approximate wall-clock position, not an upload-latency measurement. Window summaries and time-bucket analytics use server receipt time. The dashboard shows actual board/GPIO/report settings, boot pulse totals, queue/drop snapshots and database readiness. Unknown calibration keeps litres and L/min null.
+
+SQLite already stores devices, immutable raw readings, unique `(device_id, boot_id, seq)` identities and linked observations, with indexes and atomic transactions. JSON retains raw metadata; CSV and the analytics API support further research. Source updates preserve the private database. Back it up with the existing backup command before independent schema work.
 
 ## Data API
 
@@ -275,7 +293,7 @@ For an interactive terminal, use `python -m serial.tools.miniterm COM19 115200 -
 | `benchmark` | Run the DSP microbenchmark; this can delay a report |
 | `reboot` | Restart and restore the compiled default settings |
 
-Changes are **volatile until reboot**. Set calibration only from the sensor specification or a known-volume experiment. The main task owns runtime settings, and the network task owns Wi-Fi mutations. Queued Wi-Fi requests have a separate completion response, which the helper waits for. There is no command to drive the sensor GPIO, execute a shell or erase NVS.
+Changes are **volatile until reboot**. Set calibration only from the sensor specification or a known-volume experiment. The acquisition task runs above the uploader/CLI/network-control tasks and owns runtime settings; the network task owns Wi-Fi mutations. Hardware pulse counting continues independently of HTTPS. Queued Wi-Fi requests have a separate completion response, which the helper waits for. There is no command to drive the sensor GPIO, execute a shell or erase NVS.
 
 Changing the report interval changes the telemetry rate; hardware pulse counting and edge capture continue independently. Changing the interval/window clears the rolling calculation window while preserving accumulated pulse counts. Every reading includes report interval, averaging size, calibration and config revision. Inputs are limited to 95 ASCII characters; invalid/overlong lines are discarded completely. LF, CR, CRLF, backspace and Ctrl+C cancellation are supported.
 
@@ -289,13 +307,15 @@ The CLI firmware was built and flashed to the serial-verified board, with all th
 agent.md                    Agent rules and maintained memory
 readme.md                   Setup, API and operations
 src/main.c                  Application settings and reporting loop
-src/wifi.c                  Wi-Fi, local HTTP dashboard and AP fallback
+src/wifi.c                  Wi-Fi, HTTPS uploader, local dashboard and fallback
 src/flow_sensor.c           Sensor driver, calculations and diagnostics
 src/cli.c                   Serial command parser and USB input task
 include/wifi.h              Typed Wi-Fi configuration/API
 include/flow_sensor.h       Typed sensor configuration/API
 include/cli.h               Typed command/configuration interface
 components/esp-dsp/         Minimal upstream acceleration dependency
+components/cjson/           Pinned cJSON v1.7.19 with MIT license
+partitions.csv              2 MiB application, original NVS/PHY locations
 web/                        Flask source, templates, assets and upload example
 test/host/ test/web/        Native C and Flask/deployment tests
 tools/                      Build, capture, deployment and project checks

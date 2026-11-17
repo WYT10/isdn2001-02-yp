@@ -34,6 +34,18 @@ typedef struct {
     wifi_fallback_settings_t fallback;
 } wifi_settings_t;
 
+typedef struct {
+    bool enabled;
+    const char *url;
+    const char *device_token;
+    const char *label;
+    uint32_t batch_interval_ms;
+    uint32_t timeout_ms;
+    int64_t build_epoch;
+} wifi_cloud_settings_t;
+
+esp_err_t wifi_cloud_start(const wifi_cloud_settings_t *settings);
+
 /* The ESP32 station is a singleton. Settings are copied before the task starts. */
 esp_err_t wifi_start(const wifi_settings_t *settings);
 esp_err_t wifi_publish_reading(const char *json, size_t length);

@@ -40,6 +40,17 @@ def main():
                    if any(len(value) >= 8 and value in path.read_bytes() for value in sensitive)]
         assert not exposed, "Private Wi-Fi values exposed in authored source: " + ", ".join(exposed)
     main_source = (ROOT / "src" / "main.c").read_text()
+    sensitive = []
+    for name, keys in (("cloud.json", ("device_token",)),
+                       ("sensorlab.json", ("admin_token", "viewer_token", "device_token")),
+                       ("pythonanywhere.json", ("token", "api_token"))):
+        path = ROOT / ".local" / name
+        if path.exists():
+            values = json.loads(path.read_text(encoding="utf-8"))
+            sensitive.extend(values.get(key, "").encode("utf-8") for key in keys)
+    exposed = [path.relative_to(ROOT).as_posix() for path in files
+               if any(len(value) >= 16 and value in path.read_bytes() for value in sensitive)]
+    assert not exposed, "Private application/hosting token exposed in authored source: " + ", ".join(exposed)
     assert re.search(r'\.ssid\s*=\s*"ABCD"', main_source)
     assert re.search(r'\.password\s*=\s*"00000000"', main_source)
     assert {p.name for p in (ROOT / "src").glob("*.c")} == {"main.c", "wifi.c", "flow_sensor.c", "cli.c"}

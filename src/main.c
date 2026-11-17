@@ -23,6 +23,7 @@ typedef struct {
     const char *sensor_pin;
     flow_sensor_config_t sensor;
     wifi_settings_t wifi;
+    wifi_cloud_settings_t cloud;
     cli_settings_t cli;
     struct {
         bool benchmark;
@@ -83,6 +84,15 @@ static const app_config_t app = {
             .channel = 6,
             .max_clients = 4,
         },
+    },
+    .cloud = {
+        .enabled = SENSORLAB_PRIVATE_CLOUD && !FLOW_RUN_SELF_TEST,
+        .url = SENSORLAB_CLOUD_URL,
+        .device_token = SENSORLAB_CLOUD_TOKEN,
+        .label = "ZJ-S201C",
+        .batch_interval_ms = 3000,
+        .timeout_ms = 10000,
+        .build_epoch = SENSORLAB_BUILD_EPOCH,
     },
     .cli = {.enabled = true, .stream = false},
     .diagnostics = {
@@ -196,10 +206,13 @@ void app_main(void)
     flow_sensor_snapshot_t previous, current;
     flow_sensor_snapshot(&previous);
     ESP_ERROR_CHECK(wifi_start(&app.wifi));
+    ESP_ERROR_CHECK(wifi_cloud_start(&app.cloud));
     runtime_config_t runtime = {.sensor = app.sensor, .stream = app.cli.stream};
     commands = xQueueCreate(8, sizeof(cli_request_t));
     if (!commands) ESP_ERROR_CHECK(ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(cli_start(&app.cli, submit_command, NULL));
+    /* Wake the short acquisition work ahead of network formatting/TLS tasks. */
+    vTaskPrioritySet(NULL, 4);
     uint64_t total = previous.count;
     uint32_t counts[FLOW_SENSOR_WINDOW_CAPACITY] = {0};
     uint64_t times[FLOW_SENSOR_WINDOW_CAPACITY] = {0};
