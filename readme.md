@@ -4,6 +4,24 @@ XIAO ESP32-S3 and ESP32-WROOM sensor firmware, with a responsive Flask research 
 
 This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. Optional direct ESP32 HTTPS uploading runs in a separate task with bounded buffering and retry-safe batches. Actual pulse reading was confirmed by blowing air through the connected sensor. The site is live at [greenwithisd.pythonanywhere.com](https://greenwithisd.pythonanywhere.com/): public health, database readiness and the login page returned HTTP 200. Direct WROOM-to-cloud ingestion and a physical air test are verified: the database retained 1,005 boot pulses, an 80.99838 Hz peak, 76 exact UART/cloud sample matches and stopped/stale readings. This verifies the electrical/rotor response and delivery, not water-flow accuracy. Calibration remains unknown; raw pulse frequency and timing are the primary measurements.
 
+## Green living UI prototype
+
+Open `/living` after signing in, or choose **Green living** from the sensor dashboard. The household/app concept combines inside water/socket-energy quantities with outside transport, shopping and food activities, followed by understandable footprint views and reflection prompts. This release uses **synthetic Hong Kong activities only**; the real sensor stream remains at `/`.
+
+The UI includes an activity-category treemap with shares, inside/outside/category filters, a light/dark street map with weighted Gaussian KDE contours, adjustable smoothing, activity labels, a reflection-dialog preview and JSON export. The **green living index** is a manually adjustable synthetic score: **−1 left, 0 straight up, +1 right**. Its formula is intentionally undefined and it does not change with activity filters or claim measured behaviour improvement.
+
+Example input totals are kg CO₂e. The contour scale is **kg CO₂e/km²**: each activity contributes a mass-weighted Gaussian in a local metre projection. The selected radius is Gaussian sigma, not a trip distance; smoothing changes density/appearance but preserves the input total. The 96×96 grid extends four sigma beyond the activity bounds. This is a city-scale point-attribution preview (up to 50 activities; at most 0.8 degrees per coordinate axis), not measured air pollution or route reconstruction. No researched conversion factors, baselines or uncertainty bounds have been supplied. Do not convert raw uncalibrated pulse counts directly to emissions.
+
+`GET /api/v1/living/example` and `POST /api/v1/living/preview` accept viewer/admin authentication. Session POSTs require CSRF. Preview inputs are calculated on the server but are **not stored in SQLite**. Filters use `scope` (`all`, `inside`, `outside`), `category` (`all`, `energy`, `water`, `transport`, `shopping`, `food`, `other`) and `bandwidth_m` (250, 500, 750, 1250, 2000). Paste an array in **Edit preview data**:
+
+```json
+[{"name":"Example home","category":"energy","scope":"inside","lat":22.3364,"lon":114.2655,"co2e_kg":12}]
+```
+
+The user will supply researched data, linked APIs and an index definition later. Future activity storage should retain source identity, activity/time/unit, factor version, estimate method, location precision and any user confirmation. GPS activity inference should be distinguished from a confirmed activity. Real background tracking, push notifications and a scoring model are not enabled by this UI prototype.
+
+Map/chart scripts are pinned local copies: Leaflet 1.9.4 (BSD-2-Clause) and D3 7.9.0 (ISC), with licenses under `static/vendor/` and included in the web package. Street imagery comes from OpenStreetMap with visible attribution and normal browser caching, following its [tile policy](https://operations.osmfoundation.org/policies/tiles/). Only `/living` allows that tile image origin and an origin-only cross-site referrer; all scripts remain same-origin. No bulk/offline tile downloader is included. The map shows a tile-unavailable message if the base layer fails.
+
 ## First upload to PythonAnywhere
 
 Already created `~/mysite/flask_app.py` using PythonAnywhere's Flask setup? Keep that web app. The ZIP now includes `flask_app.py` and matches its default entry point. This project needs the whole ZIP, including the `sensorlab/` package, templates and static files; uploading only flask_app.py is insufficient.

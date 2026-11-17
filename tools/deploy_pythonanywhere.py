@@ -28,7 +28,9 @@ def sources(folder=WEB):
             continue
         relative = path.relative_to(folder)
         allowed = relative.as_posix() in TOP_LEVEL or (
-            relative.parts[0] == "sensorlab" and path.suffix in SUFFIXES and "__pycache__" not in relative.parts
+            relative.parts[0] == "sensorlab" and (path.suffix in SUFFIXES or
+                relative.as_posix() in {"sensorlab/static/vendor/leaflet-license.txt", "sensorlab/static/vendor/d3-license.txt"})
+            and "__pycache__" not in relative.parts
         )
         if not allowed:
             continue

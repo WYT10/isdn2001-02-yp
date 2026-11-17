@@ -80,8 +80,9 @@ def create_app(test_config=None):
     def response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "same-origin"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin" if request.path == "/living" else "same-origin"
+        images = "https://tile.openstreetmap.org" if request.path == "/living" else ""
+        response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: {images}; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         if not request.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -99,6 +100,8 @@ def create_app(test_config=None):
 
     from .api import api
     app.register_blueprint(api)
+    from .living import living
+    app.register_blueprint(living)
 
     @app.cli.command("seed-demo")
     def seed_demo():
