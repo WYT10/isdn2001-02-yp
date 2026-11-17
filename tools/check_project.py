@@ -1,5 +1,6 @@
 """Check publication boundaries without requiring Flask, Git, or network access."""
 import importlib.util
+import json
 import os
 import re
 import zipfile
@@ -31,6 +32,13 @@ def main():
         if any(pattern.search(path.read_bytes()) for pattern in forbidden):
             failures.append(path.relative_to(ROOT).as_posix())
     assert not failures, "Possible old account/credential material in: " + ", ".join(failures)
+    private_wifi = ROOT / ".local" / "wifi.json"
+    if private_wifi.exists():
+        private = json.loads(private_wifi.read_text(encoding="utf-8"))
+        sensitive = [private.get(name, "").encode("utf-8") for name in ("username", "password")]
+        exposed = [path.relative_to(ROOT).as_posix() for path in files
+                   if any(len(value) >= 8 and value in path.read_bytes() for value in sensitive)]
+        assert not exposed, "Private Wi-Fi values exposed in authored source: " + ", ".join(exposed)
     main_source = (ROOT / "src" / "main.c").read_text()
     assert re.search(r'\.ssid\s*=\s*"ABCD"', main_source)
     assert re.search(r'\.password\s*=\s*"00000000"', main_source)

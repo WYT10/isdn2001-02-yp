@@ -1,6 +1,7 @@
 #include "flow_sensor.h"
 #include "wifi.h"
 #include "cli.h"
+#include "wifi_private.h"
 #include "sdkconfig.h"
 #include "esp_cpu.h"
 #include "esp_system.h"
@@ -53,8 +54,20 @@ static const app_config_t app = {
         .pulses_per_litre = 0.0, /* Unknown until calibrated. */
     },
     .wifi = {
+#if SENSORLAB_PRIVATE_ENTERPRISE
+        .ssid = SENSORLAB_EAP_SSID,
+        .enterprise = {
+            .enabled = true,
+            .identity = SENSORLAB_EAP_IDENTITY,
+            .username = SENSORLAB_EAP_USERNAME,
+            .password = SENSORLAB_EAP_PASSWORD,
+            .server_domain = SENSORLAB_EAP_SERVER_DOMAIN,
+            .build_epoch = SENSORLAB_BUILD_EPOCH,
+        },
+#else
         .ssid = "ABCD",
         .password = "00000000",
+#endif
         .retry_delay_ms = 5000,
         .status_interval_ms = 60000,
         .fallback = {

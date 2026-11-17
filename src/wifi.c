@@ -3,12 +3,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_eap_client.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -147,6 +149,7 @@ static const char dashboard[] =
 
 static const char *network_auth_label(void)
 {
+    if (settings.enterprise.enabled) return "wpa2_enterprise_peap";
     return settings.password[0] ? "wpa2_personal" : "open";
 }
 
@@ -337,8 +340,8 @@ static void on_network_event(void *context, esp_event_base_t base, int32_t id, v
         state.station_connected = true;
         portEXIT_CRITICAL(&state_lock);
         printf("{\"type\":\"wifi\",\"status\":\"connected\",\"ssid\":\"%s\","
-               "\"ip\":\"%s\",\"auth\":\"%s\",\"server_validation\":false}\n",
-               target_ssid_json, ip, network_auth_label());
+               "\"ip\":\"%s\",\"auth\":\"%s\",\"server_validation\":%s}\n",
+               target_ssid_json, ip, network_auth_label(), settings.enterprise.enabled ? "true" : "false");
         xEventGroupSetBits(events, CONNECTED);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
         portENTER_CRITICAL(&state_lock);
@@ -416,7 +419,8 @@ static esp_err_t initialise_network(void)
     NET_TRY(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     wifi_config_t config = {
         .sta = {
-            .threshold.authmode = settings.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
+            .threshold.authmode = settings.enterprise.enabled ? WIFI_AUTH_WPA2_ENTERPRISE :
+                                  settings.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
             .scan_method = WIFI_ALL_CHANNEL_SCAN,
             .pmf_cfg = {.capable = true, .required = false},
         },
@@ -425,6 +429,24 @@ static esp_err_t initialise_network(void)
     memcpy(config.sta.password, settings.password, strlen(settings.password));
     NET_TRY(esp_wifi_set_mode(settings.fallback.enabled ? WIFI_MODE_APSTA : WIFI_MODE_STA));
     NET_TRY(esp_wifi_set_config(WIFI_IF_STA, &config));
+    if (settings.enterprise.enabled) {
+        const wifi_enterprise_settings_t *enterprise = &settings.enterprise;
+        struct timeval clock;
+        gettimeofday(&clock, NULL);
+        if (clock.tv_sec < enterprise->build_epoch) {
+            clock.tv_sec = enterprise->build_epoch;
+            clock.tv_usec = 0;
+            if (settimeofday(&clock, NULL)) return ESP_FAIL;
+        }
+        NET_TRY(esp_eap_client_set_identity((const unsigned char *)enterprise->identity, strlen(enterprise->identity)));
+        NET_TRY(esp_eap_client_set_username((const unsigned char *)enterprise->username, strlen(enterprise->username)));
+        NET_TRY(esp_eap_client_set_password((const unsigned char *)enterprise->password, strlen(enterprise->password)));
+        NET_TRY(esp_eap_client_set_eap_methods(ESP_EAP_TYPE_PEAP));
+        NET_TRY(esp_eap_client_use_default_cert_bundle(true));
+        NET_TRY(esp_eap_client_set_domain_name(enterprise->server_domain));
+        NET_TRY(esp_eap_client_set_disable_time_check(false));
+        NET_TRY(esp_wifi_sta_enterprise_enable());
+    }
     if (settings.fallback.enabled) {
         wifi_config_t ap = {
             .ap = {
@@ -482,7 +504,8 @@ static void network_task(void *context)
         return;
     }
     printf("{\"type\":\"wifi\",\"status\":\"starting\",\"ssid\":\"%s\","
-           "\"auth\":\"%s\",\"server_validation\":false}\n", target_ssid_json, network_auth_label());
+           "\"auth\":\"%s\",\"server_validation\":%s}\n", target_ssid_json, network_auth_label(),
+           settings.enterprise.enabled ? "true" : "false");
     esp_err_t err = initialise_network();
     if (err != ESP_OK) {
         printf("{\"type\":\"wifi\",\"status\":\"setup_error\",\"code\":%d}\n", err);
@@ -629,6 +652,12 @@ esp_err_t wifi_start(const wifi_settings_t *config)
     if (!config || !valid_credentials(config->ssid, config->password, true) ||
         !pdMS_TO_TICKS(config->retry_delay_ms) || !pdMS_TO_TICKS(config->status_interval_ms))
         return ESP_ERR_INVALID_ARG;
+    if (config->enterprise.enabled &&
+        (!config->enterprise.identity[0] || !memchr(config->enterprise.identity, 0, sizeof(config->enterprise.identity)) ||
+         !config->enterprise.username[0] || !memchr(config->enterprise.username, 0, sizeof(config->enterprise.username)) ||
+         !config->enterprise.password[0] || !memchr(config->enterprise.password, 0, sizeof(config->enterprise.password)) ||
+         !config->enterprise.server_domain[0] || !memchr(config->enterprise.server_domain, 0, sizeof(config->enterprise.server_domain)) ||
+         config->enterprise.build_epoch < 1704067200)) return ESP_ERR_INVALID_ARG;
     if (config->fallback.enabled &&
         (!valid_credentials(config->fallback.ssid, config->fallback.password, false) ||
          !config->fallback.after_ms || !pdMS_TO_TICKS(config->fallback.retry_delay_ms) ||

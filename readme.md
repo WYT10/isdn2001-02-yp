@@ -171,7 +171,7 @@ Edit the typed `app` initializer in `src/main.c`: `.sensor` holds GPIO, pull-up,
 
 The network task retries ABCD continuously, five seconds after each failed attempt. If it has no station IP for 60 seconds, it enables AP+STA fallback:
 
-- Join **SensorLab-Local**, password **00000000**, and open **http://192.168.4.1**. If your phone warns that this network has no Internet, choose to remain connected.
+- Join **SensorLab-Local** on XIAO or **SensorLab-WROOM** on WROOM, password **00000000**, and open **http://192.168.4.1**. If your phone warns that this network has no Internet, choose to remain connected.
 - The responsive page shows raw frequency, pulse counts, high/low time, duty cycle and calibrated values when available. It polls `/api/status` once per second; the reader itself still reports every 250 ms. `/healthz` reports local HTTP liveness.
 - Station retries continue, spaced 30 seconds after failures once fallback is active. The local AP stays on until reboot, including after station recovery. The HTTP server then also listens on the station IP.
 - The trigger is missing IP, rather than an Internet health check. AP+STA shares one radio/channel; scanning or upstream channel changes can briefly interrupt local clients. There is no Internet forwarding/NAT.
@@ -230,6 +230,14 @@ python tools/serial_cli.py --port COM_PORT stream off
 For local Wi-Fi, join **SensorLab-WROOM**, password **00000000**, then open **http://192.168.4.1**. `wifi ap only` activates it immediately after network setup. Automatic fallback still starts after 60 seconds without a station IP. The distinct SSID prevents confusion with a nearby XIAO AP. The upstream test hotspot stays ABCD/00000000.
 
 Optional synthetic firmware is `esp32_wroom_selftest`, using disconnected GPIO4; restore `esp32_wroom` afterwards. Do not run it with anything connected to GPIO4. The generic profile assumes a classic ESP32-WROOM and 4 MB flash; confirm the actual hardware before uploading. PlatformIO's [esp32dev profile](https://docs.platformio.org/en/latest/boards/espressif32/esp32dev.html) and Espressif's [GPIO restrictions](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32/api-reference/peripherals/gpio.html) describe this target.
+
+The replacement WROOM on COM16 (MAC ending 4b:fe:38) passed its first real hardware test on D15/GPIO15. ABCD connected on the first attempt at 10.64.117.36, with -46/-43/-44 dBm across three scans; eduroam was visible too. The user joined SensorLab-WROOM and opened its dashboard, with one client confirmed by the driver. Blowing air through the sensor counted 1236 pulses, peak rolling frequency 57 Hz, captured high/low/duty timing and cleared stopped/stale readings. Flow calibration remains unknown. The local build, all flash-region hashes, three DSP numerical cases and both chip builds/source checks in GitHub CI passed. No WROOM synthetic-output test or water accuracy test is claimed.
+
+### Private enterprise Wi-Fi
+
+An optional ignored `.local/wifi.json` selects a private PEAP profile when configuring the firmware. It has `ssid`, `identity`, `username`, `password` and `server_domain` string fields. Keep real values out of source, command arguments and dashboard routes. The generator writes only into the ignored build directory; firmware containing the profile is private too. Without this file, builds use ABCD/00000000. Force a clean build when first adding or removing the profile so CMake regenerates it.
+
+For HKUST, use PEAP/MSCHAPv2 with server domain `wireless.ust.hk` and the system CA bundle, following [HKUST's instructions](https://itso.hkust.edu.hk/services/general-it-services/wifi/wi-fi-services/configuration-eduroam/Android). The implementation verifies the CA chain and hostname and keeps certificate-time checks enabled. It seeds the board clock from build time before the first authentication; this is a bootstrap clock, not a measured network-time service. The sensor CLI and local HTTP routes never return enterprise identity or password. The private WROOM build connected to eduroam on its first attempt at 10.89.157.94 with validation enabled, retained its IP during the check and kept SensorLab-WROOM active alongside it. Actual host requests to the dashboard, health and status routes returned HTTP 200 with credentials absent. Build/flash/serial logs and authored-source checks also passed the secret audit. Account values, generated headers and the credential-bearing firmware remain excluded from Git and the upload ZIP. Public/default builds retain ABCD; the sensor input remains D15/GPIO15.
 
 ## USB serial commands
 
