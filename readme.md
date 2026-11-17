@@ -77,7 +77,7 @@ After first deployment, obtain the account API token from PythonAnywhere's **Acc
 }
 ```
 
-EU accounts use `eu.pythonanywhere.com` and the actual site domain. Environment alternatives are `PA_USERNAME`, `PA_API_TOKEN`, `PA_API_HOST` and `PA_DOMAIN`. The account token is separate from app access keys and is never sent to Flask.
+EU accounts use `eu.pythonanywhere.com` and the actual site domain. Environment alternatives are `PA_USERNAME`, `PA_API_TOKEN`, `PA_API_HOST` and `PA_DOMAIN`. The account token is separate from app access keys and is never sent to Flask. Authentication follows possession of the token: anyone who obtains it can use the account API permissions; it is not restricted to a particular person or assistant. Keep it in the ignored local configuration or environment, with access limited to trusted users. Public GitHub source and browser assets are visible publicly; instance configuration, databases and hosting tokens stay excluded.
 
 From the project root, in the development environment:
 
