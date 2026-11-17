@@ -93,6 +93,8 @@ python tools/deploy_pythonanywhere.py check
 
 Keep subsequent source updates through the updater so its manifest stays current. Install changed requirements in the remote virtualenv before deploying a dependency update. Initial WSGI/virtualenv setup and database migrations are separate operations; source rollback does not roll back a database migration. The live site passes health/readiness/login checks. Account API access is now verified: a temporary file passed upload, exact readback and deletion, and the official Reload API succeeded with healthy release/database checks afterward. The temporary file was removed; the current dashboard update was subsequently deployed through the same snapshot/reload workflow, preserving instance configuration and the research database. The provider account token remains in the ignored local settings and is separate from SensorLab application role keys. Run `auth` to check access before subsequent API deployments.
 
+The direct-upload release is published on `test/esp32-wroom` at code commit `e632ec6`; [all three CI jobs](https://github.com/WYT10/isdn2001-02-yp/actions/runs/44198904761) passed (40 web/provisioning/deployment tests, native/source checks, and clean WROOM/S3 builds). The connected WROOM is flashed and uploading.
+
 ## Direct sensor uploads
 
 Create **ignored** `.local/cloud.json` using the site's **device** key only:
@@ -101,9 +103,11 @@ Create **ignored** `.local/cloud.json` using the site's **device** key only:
 {"url":"https://YOUR_USERNAME.pythonanywhere.com/api/v1/readings","device_token":"YOUR_DEVICE_KEY"}
 ```
 
-Build and flash normally. CMake generates a private header; no cloud key is committed, and public builds disable uploading. Private firmware images contain credentials and must stay private. Self-test builds disable uploading so synthetic waveforms cannot enter the real dataset. Network and uploader defaults live in `app.wifi` and `app.cloud` in main.c; implementation stays in wifi.c/h.
+When first adding or removing a private profile, run `pio run -e esp32_wroom -t clean` once, then build and flash normally. CMake generates a private header; no cloud key is committed, and public builds disable uploading. Private firmware images contain credentials and must stay private. Self-test builds disable uploading so synthetic waveforms cannot enter the real dataset. Network and uploader defaults live in `app.wifi` and `app.cloud` in main.c; implementation stays in wifi.c/h.
 
 The board uses CA-verified HTTPS without redirects, an ID derived from its MAC, a random boot ID and increasing sample sequence numbers. Every 250 ms report is enqueued without waiting for the network. Up to 24 reports are sent per request on a three-second schedule; the HTTPS connection is reused after success, and an unsuccessful batch is retained unchanged for deduplicated retries with 5–60 second backoff. Invalid/authentication/conflict responses block further uploads until reboot/configuration correction and are visible in `wifi status` and local `/api/status`.
+
+The default cloud schedule can send at most 24 reports per three-second interval before network overhead; faster CLI reporting may overflow the queue unless the compiled upload schedule is adjusted. The acquisition priority reduces scheduling jitter, but it is not a hard real-time guarantee.
 
 Buffering is **RAM only**: 24 waiting reports plus at most 24 pending reports. A full queue drops new reports and increments `upload_dropped`; sequence gaps remain visible in the chart. Reboot loses unsent reports. This starter does not provide persistent offline logging. Use `wifi status` for acknowledgements, pending/queued reports, failures, clock state and drops; no token is returned. The 2 MiB application partition starts at 0x10000; NVS remains 0x9000/0x6000 and PHY remains 0xf000/0x1000. Do not erase flash when updating.
 
