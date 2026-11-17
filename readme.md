@@ -177,7 +177,7 @@ The network task retries ABCD continuously, five seconds after each failed attem
 - The trigger is missing IP, rather than an Internet health check. AP+STA shares one radio/channel; scanning or upstream channel changes can briefly interrupt local clients. There is no Internet forwarding/NAT.
 - The driver's individual authentication/association timers are unchanged. App retry/wait logs include attempt numbers and elapsed milliseconds. Sensor reporting runs independently.
 
-The user currently has no external antenna. The latest serial probe confirmed the configured AP is active and not hidden, and all three HTTP loopback routes pass. However, the phone still cannot discover it after a fresh restart, hotspot off and a check 5-10 cm from the board; a 60-second watch recorded zero clients. Nearby networks appeared weak at -85 to -94 dBm, and ABCD was absent. Missing antenna is the leading hypothesis; a known-good compatible antenna is needed to test it against other RF faults. [Seeed warns that Wi-Fi may fail without the antenna](https://wiki.seeedstudio.com/xiao_esp32s3_wifi_usage/#installation-of-antenna). Driver configuration and internal HTTP checks do not establish over-the-air visibility.
+The newly connected XIAO (USB serial ending `FB5408`, currently COM23) was tested without an antenna. All three scans found **ABCD**, WPA2-Personal on channel 11, at **-78/-81/-82 dBm**; none found **eduroam**. Ten connection attempts over about 121 seconds obtained no station IP. Automatic fallback opened after 60.054 seconds and all three internal HTTP checks passed, but the user could not see SensorLab-Local on the phone. The board was then left in AP-only mode: active, not hidden, WPA2, channel 6, with zero clients during a 30-second watch. Phone discovery after that final mode switch is unverified. A compatible known-good antenna is the next useful comparison; missing antenna is a hypothesis, not a proven root cause. [Seeed warns that Wi-Fi may fail without the antenna](https://wiki.seeedstudio.com/xiao_esp32s3_wifi_usage/#installation-of-antenna). Internal HTTP success does not establish wireless client connectivity.
 
 ZJ-S201C signal: **D10/GPIO9**, with common ground and a 3.3 V compatible signal interface. Supply the sensor according to its label. A GPIO pull-up does not level-shift a driven 5 V signal.
 
@@ -185,19 +185,19 @@ PCNT continuously counts rising edges with a 1 microsecond glitch filter and ext
 
 ```bash
 pio run -e seeed_xiao_esp32s3
-pio run -e seeed_xiao_esp32s3 -t upload --upload-port COM19
-pio device monitor --port COM19 --baud 115200
-python tools/serial_cli.py --port COM19 stream on
-python tools/capture_serial.py --port COM19 --seconds 30 --output output/hardware/reader.jsonl
+pio run -e seeed_xiao_esp32s3 -t upload --upload-port COM23
+pio device monitor --port COM23 --baud 115200
+python tools/serial_cli.py --port COM23 stream on
+python tools/capture_serial.py --port COM23 --seconds 30 --output output/hardware/reader.jsonl
 ```
 
-Verify the USB device before flashing; COM19 may change. The last verified unit's serial ends `FB6FC8`. Its original pre-reader flash backup and restore instructions remain locally in ignored `.pio/backup/`.
+Verify the USB device before flashing; COM23 may change. The current unit's serial ends `FB5408`; the older unit ends `FB6FC8`. Their distinct original full-flash backups and restore manifests remain privately in ignored `.pio/backup/`. Never restore one unit's backup to the other.
 
 The `selftest` environment uses **D3/GPIO4**, disconnected from external wiring, for 5/75/150/1000 Hz synthetic pulses, a 20 kHz count-only wrap test and stopped-signal checks. Restore the normal reader after testing:
 
 ```bash
-pio run -e selftest -t upload --upload-port COM19
-pio run -e seeed_xiao_esp32s3 -t upload --upload-port COM19
+pio run -e selftest -t upload --upload-port COM23
+pio run -e seeed_xiao_esp32s3 -t upload --upload-port COM23
 ```
 
 The minimal official ESP-DSP v1.8.2 multiplication sources, license and attribution remain in `components/esp-dsp`. The Xtensa FPU/hardware-loop microbenchmark is not an end-to-end sampling speedup. `read_calc_format_us` excludes final USB output, can include preemption and does not measure aggregate CPU/ISR use.
@@ -209,17 +209,17 @@ Before adding local HTTP, the three-file refactor passed native calculation/timi
 Commands run on the board through its USB Serial/JTAG COM port at 115200 baud. Close other serial monitors before using the helper. Install pyserial with the development requirements, then run from this project:
 
 ```bash
-python tools/serial_cli.py --port COM19 help
-python tools/serial_cli.py --port COM19 status
-python tools/serial_cli.py --port COM19 get
-python tools/serial_cli.py --port COM19 set report_ms 100
-python tools/serial_cli.py --port COM19 set window_samples 8
-python tools/serial_cli.py --port COM19 --watch 5 stream on
-python tools/serial_cli.py --port COM19 stream off
-python tools/serial_cli.py --port COM19 wifi status
+python tools/serial_cli.py --port COM23 help
+python tools/serial_cli.py --port COM23 status
+python tools/serial_cli.py --port COM23 get
+python tools/serial_cli.py --port COM23 set report_ms 100
+python tools/serial_cli.py --port COM23 set window_samples 8
+python tools/serial_cli.py --port COM23 --watch 5 stream on
+python tools/serial_cli.py --port COM23 stream off
+python tools/serial_cli.py --port COM23 wifi status
 ```
 
-For an interactive terminal, use `python -m serial.tools.miniterm COM19 115200 --eol LF --raw --echo`, then type commands and press Enter. Exit miniterm with Ctrl+]. The helper also accepts commands from Windows Command Prompt or PowerShell without editing firmware.
+For an interactive terminal, use `python -m serial.tools.miniterm COM23 115200 --eol LF --raw --echo`, then type commands and press Enter. Exit miniterm with Ctrl+]. The helper also accepts commands from Windows Command Prompt or PowerShell without editing firmware.
 
 | Command | Behavior |
 |---|---|
@@ -243,9 +243,9 @@ Changes are **volatile until reboot**. Set calibration only from the sensor spec
 
 Changing the report interval changes the telemetry rate; hardware pulse counting and edge capture continue independently. Changing the interval/window clears the rolling calculation window while preserving accumulated pulse counts. Every reading includes report interval, averaging size, calibration and config revision. Inputs are limited to 95 ASCII characters; invalid/overlong lines are discarded completely. LF, CR, CRLF, backspace and Ctrl+C cancellation are supported.
 
-If the AP is missing on a phone, run `wifi ap only`, then `wifi status`, and check for **SensorLab-Local** / **00000000** at **http://192.168.4.1**. This removes reconnect scans during discovery. It does not establish antenna/RF performance: this board currently has no external antenna. After the check, `wifi auto` resumes the normal fallback behavior.
+If the AP is missing on a phone, run `wifi ap only`, then `wifi status`, and check for **SensorLab-Local** / **00000000** at **http://192.168.4.1**. This removes reconnect scans during discovery. This board currently has no external antenna; driver status alone does not establish wireless visibility. After the check, `wifi auto` resumes the normal fallback behavior.
 
-The CLI firmware was built and flashed to the serial-verified board, with all three flash regions hash-verified. On-board tests passed command round trips, invalid/overlong input rejection, 100 ms reporting with eight-report averaging, responsive commands at a ten-second report interval, stream-off cache updates, calibration round trips, numerical DSP checks and reboot restoring defaults. The automatic fallback opened after 60.101 seconds and all three HTTP loopback routes passed. AP-only/AP+STA/auto transitions passed without duplicate connection attempts. The board is left in AP-only mode, with the driver confirming the visible SSID and channel 6. The subsequent phone discovery test failed even after a fresh AP-only restart and disabling the phone hotspot; external dashboard access remains unverified. No new physical pulses arrived during this command test; the earlier air test remains the real sensor-signal evidence.
+The CLI firmware was built and flashed to the serial-verified board, with all three flash regions hash-verified. On-board tests passed command round trips, invalid/overlong input rejection, 100 ms reporting with eight-report averaging, responsive commands at a ten-second report interval, stream-off cache updates, calibration round trips, numerical DSP checks and reboot restoring defaults. The automatic fallback opened after 60.101 seconds and all three HTTP loopback routes passed. AP-only/AP+STA/auto transitions passed without duplicate connection attempts. Those comprehensive CLI checks and the air test used the older FB6FC8 unit. Its phone discovery test failed after a fresh AP-only restart with the phone hotspot disabled. The newer FB5408 unit passed the build/flash/scan/fallback/DSP and CLI status checks described above and is now left AP-only; no new physical pulses arrived. Wireless client access and calibrated water accuracy remain unverified.
 
 ## Layout and Git hygiene
 
