@@ -100,6 +100,38 @@ class DeployTests(unittest.TestCase):
         for call in request.call_args_list:
             self.assertNotIn("token", call.kwargs)
 
+    def test_account_probe_is_read_only_and_does_not_return_private_settings(self):
+        client = deploy.PythonAnywhere("researcher", "private-account-token", interval=0)
+        responses = [(200, b'{"release":"expected"}'),
+                     (200, b'{"password_protection_password":"private-setting"}')]
+        with patch.object(deploy, "http", side_effect=responses) as request:
+            result = deploy.account_check(client, "/home/researcher/mysite",
+                                          "researcher.pythonanywhere.com", "expected")
+        self.assertTrue(result["authenticated"])
+        self.assertTrue(result["source_manifest_found"])
+        self.assertTrue(result["release_matches_local"])
+        self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+        self.assertNotIn("private-setting", json.dumps(result))
+        self.assertNotIn("private-account-token", json.dumps(result))
+
+    def test_account_probe_distinguishes_missing_source_from_failed_authentication(self):
+        client = deploy.PythonAnywhere("researcher", "private-account-token", interval=0)
+        with patch.object(deploy, "http", side_effect=[(404, b""), (200, b"{}")]):
+            result = deploy.account_check(client, "/home/researcher/mysite",
+                                          "researcher.pythonanywhere.com", "expected")
+        self.assertTrue(result["authenticated"])
+        self.assertFalse(result["source_manifest_found"])
+        self.assertFalse(result["release_matches_local"])
+
+    def test_failed_account_probe_does_not_echo_the_response_body(self):
+        client = deploy.PythonAnywhere("researcher", "private-account-token", interval=0)
+        with patch.object(deploy, "http", return_value=(401, b"private-error-detail")):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 401") as error:
+                deploy.account_check(client, "/home/researcher/mysite",
+                                     "researcher.pythonanywhere.com", "expected")
+        self.assertNotIn("private-error-detail", str(error.exception))
+        self.assertNotIn("private-account-token", str(error.exception))
+
     def test_wrong_release_is_not_accepted_as_success(self):
         responses = [(200, b'{"status":"ok","release":"old"}'),
                      (200, b'{"status":"ok","database":"ok","schema_version":1}')]

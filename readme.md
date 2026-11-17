@@ -84,13 +84,14 @@ From the project root, in the development environment:
 ```bash
 python tools/deploy_pythonanywhere.py plan
 python tools/deploy_pythonanywhere.py bundle
+python tools/deploy_pythonanywhere.py auth
 python tools/deploy_pythonanywhere.py deploy
 python tools/deploy_pythonanywhere.py check
 ```
 
-`plan` and `bundle` work offline. `deploy` runs web tests, compares the release manifest, snapshots affected remote source to ignored `output/deploy/`, uploads changes, reloads and verifies the running release and database readiness. On upload or health failure it attempts source restoration and requests another reload. It never replaces instance configuration or research databases. API requests are paced for the documented rate limit.
+`plan` and `bundle` work offline. `auth` checks the account Files and Webapp APIs using GET only, reporting access and whether the remote release matches local source without returning source or private settings. `deploy` runs web tests, compares the release manifest, snapshots affected remote source to ignored `output/deploy/`, uploads changes, reloads and verifies the running release and database readiness. On upload or health failure it attempts source restoration and requests another reload. It never replaces instance configuration or research databases. API requests are paced for the documented rate limit.
 
-Keep subsequent source updates through the updater so its manifest stays current. Install changed requirements in the remote virtualenv before deploying a dependency update. Initial WSGI/virtualenv setup and database migrations are separate operations; source rollback does not roll back a database migration. The first manual deployment is live; account-token access and API-triggered updates/reload remain to be tested.
+Keep subsequent source updates through the updater so its manifest stays current. Install changed requirements in the remote virtualenv before deploying a dependency update. Initial WSGI/virtualenv setup and database migrations are separate operations; source rollback does not roll back a database migration. The first manual deployment is live and its latest public health/readiness/login checks pass. Account-token access and API-triggered updates/reload remain to be tested: the prepared local account settings still need the provider API token. This is separate from the SensorLab application role keys. Run `auth` after filling the ignored file, before the first API deployment.
 
 ## Data API
 
@@ -161,7 +162,7 @@ python tools/check_project.py
 python tools/deploy_pythonanywhere.py bundle
 ```
 
-The current package passed 33 Flask/deployment tests, including starting the extracted ZIP through PythonAnywhere's default flask_app entry point. The original 32 tests cover roles/CSRF, input bounds, atomic ingestion and retries, persistence, exports, analytics, feedback, setup/backup preservation, file API formatting, release validation and source rollback. Chromium checks passed at widths 1440, 768, 390 and 320, including login, chart switching, feedback, CSV and logout. These are viewport checks, not tests on every physical operating system or iPad model. The hosted health/readiness/login-page checks now pass, with the release matching the uploaded package and database schema 1 ready. Hosted authenticated flows and actual sensor ingestion remain unverified.
+The local source passed 36 Flask/deployment tests, including starting the extracted ZIP through PythonAnywhere's default flask_app entry point and the read-only account-API probe. The original 32 tests cover roles/CSRF, input bounds, atomic ingestion and retries, persistence, exports, analytics, feedback, setup/backup preservation, file API formatting, release validation and source rollback. Chromium checks passed at widths 1440, 768, 390 and 320, including login, chart switching, feedback, CSV and logout. These are viewport checks, not tests on every physical operating system or iPad model. The hosted health/readiness/login-page checks now pass, with the release matching the uploaded package and database schema 1 ready. Hosted authenticated flows and actual sensor ingestion remain unverified.
 
 ## Firmware
 

@@ -137,6 +137,19 @@ def wait_healthy(domain, release):
             time.sleep(2)
 
 
+def account_check(client, remote_dir, domain, expected_release):
+    """Verify account API access using GET only; return no source or private settings."""
+    manifest = client.get_file(remote_dir + "/release.json")
+    client.call("GET", "webapps/" + quote(domain, safe="") + "/")
+    try:
+        release = json.loads(manifest or b"{}").get("release")
+    except (ValueError, AttributeError):
+        release = None
+    return {"authenticated": True, "domain": domain, "remote_dir": remote_dir,
+            "source_manifest_found": manifest is not None,
+            "release_matches_local": release == expected_release}
+
+
 def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=wait_healthy):
     old_manifest = client.get_file(remote_dir + "/release.json")
     try:
@@ -186,7 +199,7 @@ def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=w
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "bundle", "deploy", "check"))
+    parser.add_argument("action", choices=("plan", "bundle", "auth", "deploy", "check"))
     parser.add_argument("--config", type=Path, default=ROOT / ".local" / "pythonanywhere.json")
     args = parser.parse_args()
     if args.action in ("plan", "bundle", "deploy"):
@@ -214,6 +227,10 @@ def main():
     home = PurePosixPath("/home") / username
     if ".." in remote.parts or not remote.is_relative_to(home) or remote == home:
         raise ValueError("remote_dir must be a project directory below the account home")
+    if args.action == "auth":
+        print(json.dumps(account_check(PythonAnywhere(username, token, host), str(remote), domain,
+                                       sources()[1]), indent=2))
+        return
     # A deploy always tests the local backend before changing remote files.
     subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "test/web", "-v"], cwd=ROOT, check=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6]
