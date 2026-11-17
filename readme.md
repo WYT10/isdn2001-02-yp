@@ -2,7 +2,7 @@
 
 XIAO ESP32-S3 sensor firmware and a responsive Flask research dashboard for PythonAnywhere. The first supported sensor is the ZJ-S201C water-flow sensor. Read [agent.md](agent.md) for agent instructions and maintained project memory. These are the only authored Markdown files in the repository.
 
-This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. ESP32 HTTP uploading is the next integration step. Actual pulse reading was confirmed by blowing air through the connected sensor. Water-flow calibration and online deployment remain to be verified.
+This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. ESP32 HTTP uploading is the next integration step. Actual pulse reading was confirmed by blowing air through the connected sensor. The site is live at [greenwithisd.pythonanywhere.com](https://greenwithisd.pythonanywhere.com/): public health, database readiness and the login page returned HTTP 200. Water-flow calibration and actual sensor-to-cloud delivery remain to be verified.
 
 ## First upload to PythonAnywhere
 
@@ -90,7 +90,7 @@ python tools/deploy_pythonanywhere.py check
 
 `plan` and `bundle` work offline. `deploy` runs web tests, compares the release manifest, snapshots affected remote source to ignored `output/deploy/`, uploads changes, reloads and verifies the running release and database readiness. On upload or health failure it attempts source restoration and requests another reload. It never replaces instance configuration or research databases. API requests are paced for the documented rate limit.
 
-Keep subsequent source updates through the updater so its manifest stays current. Install changed requirements in the remote virtualenv before deploying a dependency update. Initial WSGI/virtualenv setup and database migrations are separate operations; source rollback does not roll back a database migration. Real account-token access and remote reload remain to be tested after your upload.
+Keep subsequent source updates through the updater so its manifest stays current. Install changed requirements in the remote virtualenv before deploying a dependency update. Initial WSGI/virtualenv setup and database migrations are separate operations; source rollback does not roll back a database migration. The first manual deployment is live; account-token access and API-triggered updates/reload remain to be tested.
 
 ## Data API
 
@@ -161,7 +161,7 @@ python tools/check_project.py
 python tools/deploy_pythonanywhere.py bundle
 ```
 
-The current package passed 33 Flask/deployment tests, including starting the extracted ZIP through PythonAnywhere's default flask_app entry point. The original 32 tests cover roles/CSRF, input bounds, atomic ingestion and retries, persistence, exports, analytics, feedback, setup/backup preservation, file API formatting, release validation and source rollback. Chromium checks passed at widths 1440, 768, 390 and 320, including login, chart switching, feedback, CSV and logout. These are viewport checks, not tests on every physical operating system or iPad model. Remote deployment remains unverified.
+The current package passed 33 Flask/deployment tests, including starting the extracted ZIP through PythonAnywhere's default flask_app entry point. The original 32 tests cover roles/CSRF, input bounds, atomic ingestion and retries, persistence, exports, analytics, feedback, setup/backup preservation, file API formatting, release validation and source rollback. Chromium checks passed at widths 1440, 768, 390 and 320, including login, chart switching, feedback, CSV and logout. These are viewport checks, not tests on every physical operating system or iPad model. The hosted health/readiness/login-page checks now pass, with the release matching the uploaded package and database schema 1 ready. Hosted authenticated flows and actual sensor ingestion remain unverified.
 
 ## Firmware
 
