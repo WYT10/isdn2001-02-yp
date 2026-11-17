@@ -15,7 +15,9 @@ def main():
         directories[:] = [name for name in directories if name not in IGNORED and not name.startswith(".playwright")]
         for name in names:
             path = Path(folder) / name
-            if name.startswith("sdkconfig.") and name != "sdkconfig.defaults":
+            if name.startswith("sdkconfig.") and name not in {
+                "sdkconfig.defaults", "sdkconfig.defaults.esp32", "sdkconfig.defaults.esp32s3"
+            }:
                 continue
             files.append(path)
     markdown = {path.relative_to(ROOT).as_posix() for path in files if path.suffix.lower() == ".md"}

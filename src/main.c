@@ -1,6 +1,7 @@
 #include "flow_sensor.h"
 #include "wifi.h"
 #include "cli.h"
+#include "sdkconfig.h"
 #include "esp_cpu.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -17,6 +18,8 @@
 #endif
 
 typedef struct {
+    const char *board_name;
+    const char *sensor_pin;
     flow_sensor_config_t sensor;
     wifi_settings_t wifi;
     cli_settings_t cli;
@@ -28,8 +31,19 @@ typedef struct {
 } app_config_t;
 
 static const app_config_t app = {
+#if CONFIG_IDF_TARGET_ESP32
+    .board_name = "ESP32-WROOM",
+    .sensor_pin = "GPIO27",
+#else
+    .board_name = "XIAO ESP32-S3",
+    .sensor_pin = "D10 / GPIO9",
+#endif
     .sensor = {
+#if CONFIG_IDF_TARGET_ESP32
+        .gpio = 27, /* WROOM sensor input; GPIO6-11 are reserved for flash. */
+#else
         .gpio = 9, /* XIAO D10: sensor input only. */
+#endif
         .pull_up = true,
         .capture_timing = true,
         .glitch_filter_ns = 1000,
@@ -45,7 +59,11 @@ static const app_config_t app = {
         .status_interval_ms = 60000,
         .fallback = {
             .enabled = true,
+#if CONFIG_IDF_TARGET_ESP32
+            .ssid = "SensorLab-WROOM",
+#else
             .ssid = "SensorLab-Local",
+#endif
             .password = "00000000",
             .after_ms = 60000,
             .retry_delay_ms = 30000,
@@ -150,11 +168,11 @@ static bool apply_command(const cli_request_t *request, runtime_config_t *runtim
 void app_main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
-    /* Allow time for native USB to enumerate and a monitor to attach. */
+    /* Allow time for the serial bridge/native USB and a monitor to attach. */
     vTaskDelay(pdMS_TO_TICKS(3000));
-    printf("{\"type\":\"boot\",\"sensor\":\"ZJ-S201C\",\"pin\":\"D10\","
+    printf("{\"type\":\"boot\",\"board\":\"%s\",\"sensor\":\"ZJ-S201C\",\"pin\":\"%s\","
            "\"gpio\":%d,\"report_ms\":%" PRIu32 ",\"pulses_per_litre\":%.6f,"
-           "\"calibrated\":%s,\"selftest\":%s}\n", app.sensor.gpio,
+           "\"calibrated\":%s,\"selftest\":%s}\n", app.board_name, app.sensor_pin, app.sensor.gpio,
            app.sensor.report_ms, app.sensor.pulses_per_litre,
            app.sensor.pulses_per_litre > 0 ? "true" : "false",
            app.diagnostics.self_test ? "true" : "false");
@@ -216,13 +234,13 @@ void app_main(void)
         uint32_t cycles = esp_cpu_get_cycle_count() - cycles_start;
         int64_t work_us = esp_timer_get_time() - work_start;
         int length = snprintf(reading, sizeof(reading),
-               "{\"type\":\"flow\",\"uptime_us\":%" PRId64 ",\"dt_us\":%" PRIu64 ","
+               "{\"type\":\"flow\",\"board\":\"%s\",\"gpio\":%d,\"uptime_us\":%" PRId64 ",\"dt_us\":%" PRIu64 ","
                "\"pulses\":%" PRIu32 ",\"total_pulses\":%" PRIu64 ",\"window_us\":%" PRIu64 ","
                "\"frequency_hz\":%.5f,\"flow_lpm\":%s,\"total_l\":%s,"
                "\"pulse\":%s,\"read_calc_format_us\":%" PRId64 ",\"read_calc_format_cycles\":%" PRIu32 ","
                "\"config_revision\":%" PRIu32 ",\"report_ms\":%" PRIu32 ",\"window_samples\":%u,"
                "\"pulses_per_litre\":%.9g}",
-               current.time_us, dt, delta, total, window_us, hz, rate, volume,
+               app.board_name, runtime.sensor.gpio, current.time_us, dt, delta, total, window_us, hz, rate, volume,
                pulse, work_us, cycles, runtime.revision, runtime.sensor.report_ms,
                runtime.sensor.window_samples, runtime.sensor.pulses_per_litre);
         if (length <= 0 || (size_t)length >= sizeof(reading))

@@ -1,6 +1,6 @@
 # SensorLab
 
-XIAO ESP32-S3 sensor firmware and a responsive Flask research dashboard for PythonAnywhere. The first supported sensor is the ZJ-S201C water-flow sensor. Read [agent.md](agent.md) for agent instructions and maintained project memory. These are the only authored Markdown files in the repository.
+XIAO ESP32-S3 and ESP32-WROOM sensor firmware, with a responsive Flask research dashboard for PythonAnywhere. The first supported sensor is the ZJ-S201C water-flow sensor. Read [agent.md](agent.md) for agent instructions and maintained project memory. These are the only authored Markdown files in the repository.
 
 This first website release includes authenticated measurement ingestion, SQLite storage, JSON/CSV exports, descriptive analytics, device freshness, user feedback, health checks and a repeatable source updater. ESP32 HTTP uploading is the next integration step. Actual pulse reading was confirmed by blowing air through the connected sensor. The site is live at [greenwithisd.pythonanywhere.com](https://greenwithisd.pythonanywhere.com/): public health, database readiness and the login page returned HTTP 200. Water-flow calibration and actual sensor-to-cloud delivery remain to be verified.
 
@@ -165,9 +165,9 @@ The current package passed 33 Flask/deployment tests, including starting the ext
 
 ## Firmware
 
-PlatformIO/ESP-IDF structure is retained: `src/`, `include/`, `components/`, `test/host/`, `platformio.ini` and `sdkconfig.defaults`. Application firmware has four C files: `main.c` wires the application and owns settings; `wifi.c` handles scanning, reconnection and the local fallback dashboard; `flow_sensor.c` contains PCNT/capture, calculations, DSP benchmarks and synthetic tests; `cli.c` handles bounded USB serial commands. The public interfaces are `wifi.h`, `flow_sensor.h` and `cli.h`.
+PlatformIO/ESP-IDF structure is retained: `src/`, `include/`, `components/`, `test/host/`, `platformio.ini` and `sdkconfig.defaults`. Application firmware has four C files: `main.c` wires the application and owns settings; `wifi.c` handles scanning, reconnection and the local fallback dashboard; `flow_sensor.c` contains PCNT/capture, calculations, DSP benchmarks and synthetic tests; `cli.c` handles bounded serial commands over native USB or the board UART bridge. The public interfaces are `wifi.h`, `flow_sensor.h` and `cli.h`.
 
-Edit the typed `app` initializer in `src/main.c`: `.sensor` holds GPIO, pull-up, edge capture, glitch filter, stale timeout, report interval, averaging window and calibration; `.wifi` holds credentials, retry/status intervals and nested `.fallback` settings; `.cli` controls the serial interface and default stream; `.diagnostics` controls benchmarks and the separate test GPIO. Both modules copy their configuration. The current test hotspot is `ABCD` / `00000000`, WPA2-Personal, on the ESP32-S3's 2.4 GHz radio. Empty passwords select open authentication; a nonempty password selects a minimum WPA2 authentication threshold. Previous account configuration was removed. Application and hosting keys remain private.
+Edit the typed `app` initializer in `src/main.c`: `.sensor` holds GPIO, pull-up, edge capture, glitch filter, stale timeout, report interval, averaging window and calibration; `.wifi` holds credentials, retry/status intervals and nested `.fallback` settings; `.cli` controls the serial interface and default stream; `.diagnostics` controls benchmarks and the separate test GPIO. Both modules copy their configuration. The current test hotspot is `ABCD` / `00000000`, WPA2-Personal, on the selected ESP32 board's 2.4 GHz radio. Empty passwords select open authentication; a nonempty password selects a minimum WPA2 authentication threshold. Previous account configuration was removed. Application and hosting keys remain private.
 
 The network task retries ABCD continuously, five seconds after each failed attempt. If it has no station IP for 60 seconds, it enables AP+STA fallback:
 
@@ -179,9 +179,9 @@ The network task retries ABCD continuously, five seconds after each failed attem
 
 The user currently has no external antenna. The latest serial probe confirmed the configured AP is active and not hidden, and all three HTTP loopback routes pass. However, the phone still cannot discover it after a fresh restart, hotspot off and a check 5-10 cm from the board; a 60-second watch recorded zero clients. Nearby networks appeared weak at -85 to -94 dBm, and ABCD was absent. Missing antenna is the leading hypothesis; a known-good compatible antenna is needed to test it against other RF faults. [Seeed warns that Wi-Fi may fail without the antenna](https://wiki.seeedstudio.com/xiao_esp32s3_wifi_usage/#installation-of-antenna). Driver configuration and internal HTTP checks do not establish over-the-air visibility.
 
-ZJ-S201C signal: **D10/GPIO9**, with common ground and a 3.3 V compatible signal interface. Supply the sensor according to its label. A GPIO pull-up does not level-shift a driven 5 V signal.
+ZJ-S201C signal: **GPIO27 on WROOM**, or **D10/GPIO9 on XIAO**, with common ground and a 3.3 V compatible signal interface. Supply the sensor according to its label. A GPIO pull-up does not level-shift a driven 5 V signal.
 
-PCNT continuously counts rising edges with a 1 microsecond glitch filter and extended counter wrap. MCPWM measures rising/falling edge times for frequency, high/low duration and duty. Normal firmware never drives D10. Measurements update every 250 ms by default, with approximately a one-second rolling frequency window. Serial streaming starts off for readable command replies; the local dashboard keeps updating independently. `app.sensor.pulses_per_litre=0` until calibrated, so flow and volume remain null. Obtain the exact coefficient from the sensor datasheet or a known-volume collection. The configurable rolling window is bounded to 1-32 report samples.
+PCNT continuously counts rising edges with a 1 microsecond glitch filter and extended counter wrap. MCPWM measures rising/falling edge times for frequency, high/low duration and duty. Normal firmware never drives the selected sensor input. Measurements update every 250 ms by default, with approximately a one-second rolling frequency window. Serial streaming starts off for readable command replies; the local dashboard keeps updating independently. `app.sensor.pulses_per_litre=0` until calibrated, so flow and volume remain null. Obtain the exact coefficient from the sensor datasheet or a known-volume collection. The configurable rolling window is bounded to 1-32 report samples.
 
 ```bash
 pio run -e seeed_xiao_esp32s3
@@ -204,9 +204,36 @@ The minimal official ESP-DSP v1.8.2 multiplication sources, license and attribut
 
 Before adding local HTTP, the three-file refactor passed native calculation/timing tests and both reader/selftest firmware builds. Five synthetic on-board cases passed, including 20 kHz counting across the hardware limit and stopped/stale timing checks; DSP numerical checks passed. The normal reader was restored with flash hash verification. The subsequent air test on the connected sensor counted 1900 pulses with peak rolling frequency 154 Hz, captured duty/high/low timing, and returned to zero with stale timing cleared after stopping. Hydraulic calibration remains unverified. Its latest WPA2 capture observed 95 seconds, 368 sensor reports and 12 connection attempts without an IP; continuous retries remained active. The prior open-network test also failed before obtaining an IP. No firmware HTTP upload exists yet. Before the branding change, the final 140-second local-fallback hardware run passed: AP+STA started after 60.060 seconds without an IP, all three HTTP loopback routes passed without socket errors, 547 reports continued over 136.50 seconds, and upstream retries continued beyond two minutes. The maximum observed report interval was 262.236 ms; these reports are not a hard real-time guarantee. Browser checks passed at 320/390/768/1440 px with simulated API responses. Wireless client association and calibrated water-flow accuracy remain unverified. After the rename, an 85-second on-board check confirmed SensorLab-Local starting at 60.172 seconds, all three local HTTP routes and continued reporting; the maximum observed report interval was 250.114 ms. Previous detailed captures are archived under ignored `.local/`; current evidence and limits are in `agent.md`.
 
+## ESP32-WROOM branch
+
+Branch `test/esp32-wroom` defaults to `esp32_wroom`. Both boards use the same four application C files and portable sensor/command logic. Board-specific defaults remain in the typed `app` initializer in `main.c`; target SDK settings are in `sdkconfig.defaults.esp32` and `sdkconfig.defaults.esp32s3`.
+
+| Target | Sensor input | Serial interface | Local AP | Flash setting |
+|---|---|---|---|---|
+| `esp32_wroom` (`esp32dev`) | GPIO27 | UART0 via USB bridge, 115200 | SensorLab-WROOM | 4 MB |
+| `seeed_xiao_esp32s3` | D10 / GPIO9 | Native USB Serial/JTAG | SensorLab-Local | 8 MB |
+
+The WROOM user confirmed the sensor signal is on GPIO27. Share ground and use a 3.3 V-compatible signal. The pulse reader uses digital PCNT/MCPWM, not an analog ADC reading. GPIO6-11 are reserved for the classic ESP32's module flash; do not copy the XIAO GPIO9 wiring to WROOM. Leave UART0 GPIO1/3 available for the USB bridge. Boot and reading JSON identify the selected board and input GPIO, and the local page displays those actual values.
+
+Use the detected WROOM COM port in place of COM_PORT below. Identify the actual chip/MAC and save its original flash before its first upload; the XIAO backup cannot restore a different board. A power LED only establishes power, not USB data communication.
+
+```bash
+pio run -e esp32_wroom
+pio run -e esp32_wroom -t upload --upload-port COM_PORT
+python tools/serial_cli.py --port COM_PORT help
+python tools/serial_cli.py --port COM_PORT wifi ap only
+python tools/serial_cli.py --port COM_PORT wifi status
+python tools/serial_cli.py --port COM_PORT --watch 15 stream on
+python tools/serial_cli.py --port COM_PORT stream off
+```
+
+For local Wi-Fi, join **SensorLab-WROOM**, password **00000000**, then open **http://192.168.4.1**. `wifi ap only` activates it immediately after network setup. Automatic fallback still starts after 60 seconds without a station IP. The distinct SSID prevents confusion with a nearby XIAO AP. The upstream test hotspot stays ABCD/00000000.
+
+Optional synthetic firmware is `esp32_wroom_selftest`, using disconnected GPIO4; restore `esp32_wroom` afterwards. Do not run it with anything connected to GPIO4. The generic profile assumes a classic ESP32-WROOM and 4 MB flash; confirm the actual hardware before uploading. PlatformIO's [esp32dev profile](https://docs.platformio.org/en/latest/boards/espressif32/esp32dev.html) and Espressif's [GPIO restrictions](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32/api-reference/peripherals/gpio.html) describe this target.
+
 ## USB serial commands
 
-Commands run on the board through its USB Serial/JTAG COM port at 115200 baud. Close other serial monitors before using the helper. Install pyserial with the development requirements, then run from this project:
+Commands run at 115200 baud through native USB Serial/JTAG on XIAO or the USB-to-UART bridge on WROOM. Close other serial monitors before using the helper. Install pyserial with the development requirements, then run from this project:
 
 ```bash
 python tools/serial_cli.py --port COM19 help

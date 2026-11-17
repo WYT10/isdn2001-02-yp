@@ -22,10 +22,13 @@ jobs:
           path: dist/pythonanywhere-starter.zip
   firmware:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [seeed_xiao_esp32s3, esp32_wroom]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: python -m pip install platformio==6.2.0
-      - run: pio run -e seeed_xiao_esp32s3
+      - run: pio run -e ${{ matrix.environment }}

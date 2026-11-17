@@ -30,6 +30,8 @@ instance/
 *.map
 sdkconfig.*
 !sdkconfig.defaults
+!sdkconfig.defaults.esp32
+!sdkconfig.defaults.esp32s3
 **/*.md
 !/agent.md
 !/readme.md
