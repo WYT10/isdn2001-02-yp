@@ -177,9 +177,9 @@ The network task retries ABCD continuously, five seconds after each failed attem
 - The trigger is missing IP, rather than an Internet health check. AP+STA shares one radio/channel; scanning or upstream channel changes can briefly interrupt local clients. There is no Internet forwarding/NAT.
 - The driver's individual authentication/association timers are unchanged. App retry/wait logs include attempt numbers and elapsed milliseconds. Sensor reporting runs independently.
 
-The user currently has no external antenna. The latest serial probe confirmed the configured AP is active and not hidden, and all three HTTP loopback routes pass. However, the phone still cannot discover it after a fresh restart, hotspot off and a check 5-10 cm from the board; a 60-second watch recorded zero clients. Nearby networks appeared weak at -85 to -94 dBm, and ABCD was absent. Missing antenna is the leading hypothesis; a known-good compatible antenna is needed to test it against other RF faults. [Seeed warns that Wi-Fi may fail without the antenna](https://wiki.seeedstudio.com/xiao_esp32s3_wifi_usage/#installation-of-antenna). Driver configuration and internal HTTP checks do not establish over-the-air visibility.
+Earlier XIAO tests used no external antenna. That serial probe confirmed the configured AP is active and not hidden, and all three HTTP loopback routes pass. However, the phone still cannot discover it after a fresh restart, hotspot off and a check 5-10 cm from the board; a 60-second watch recorded zero clients. Nearby networks appeared weak at -85 to -94 dBm, and ABCD was absent. Missing antenna is the leading hypothesis; a known-good compatible antenna is needed to test it against other RF faults. [Seeed warns that Wi-Fi may fail without the antenna](https://wiki.seeedstudio.com/xiao_esp32s3_wifi_usage/#installation-of-antenna). Driver configuration and internal HTTP checks do not establish over-the-air visibility.
 
-ZJ-S201C signal: **GPIO27 on WROOM**, or **D10/GPIO9 on XIAO**, with common ground and a 3.3 V compatible signal interface. Supply the sensor according to its label. A GPIO pull-up does not level-shift a driven 5 V signal.
+ZJ-S201C signal: **D15/GPIO15 on WROOM**, or **D10/GPIO9 on XIAO**, with common ground and a 3.3 V compatible signal interface. Supply the sensor according to its label. A GPIO pull-up does not level-shift a driven 5 V signal.
 
 PCNT continuously counts rising edges with a 1 microsecond glitch filter and extended counter wrap. MCPWM measures rising/falling edge times for frequency, high/low duration and duty. Normal firmware never drives the selected sensor input. Measurements update every 250 ms by default, with approximately a one-second rolling frequency window. Serial streaming starts off for readable command replies; the local dashboard keeps updating independently. `app.sensor.pulses_per_litre=0` until calibrated, so flow and volume remain null. Obtain the exact coefficient from the sensor datasheet or a known-volume collection. The configurable rolling window is bounded to 1-32 report samples.
 
@@ -210,10 +210,10 @@ Branch `test/esp32-wroom` defaults to `esp32_wroom`. Both boards use the same fo
 
 | Target | Sensor input | Serial interface | Local AP | Flash setting |
 |---|---|---|---|---|
-| `esp32_wroom` (`esp32dev`) | GPIO27 | UART0 via USB bridge, 115200 | SensorLab-WROOM | 4 MB |
+| `esp32_wroom` (`esp32dev`) | D15 / GPIO15 | UART0 via USB bridge, 115200 | SensorLab-WROOM | 4 MB |
 | `seeed_xiao_esp32s3` | D10 / GPIO9 | Native USB Serial/JTAG | SensorLab-Local | 8 MB |
 
-The WROOM user confirmed the sensor signal is on GPIO27. Share ground and use a 3.3 V-compatible signal. The pulse reader uses digital PCNT/MCPWM, not an analog ADC reading. GPIO6-11 are reserved for the classic ESP32's module flash; do not copy the XIAO GPIO9 wiring to WROOM. Leave UART0 GPIO1/3 available for the USB bridge. Boot and reading JSON identify the selected board and input GPIO, and the local page displays those actual values.
+The current WROOM sensor signal is on the pin labelled D15, mapped to GPIO15. This supersedes the earlier GPIO27 wiring. Share ground and use a 3.3 V-compatible signal. The pulse reader uses digital PCNT/MCPWM, not an analog ADC reading. GPIO6-11 are reserved for the classic ESP32's module flash; do not copy the XIAO GPIO9 wiring to WROOM. Leave UART0 GPIO1/3 available for the USB bridge. Boot and reading JSON identify the selected board and input GPIO, and the local page displays those actual values.
 
 Use the detected WROOM COM port in place of COM_PORT below. Identify the actual chip/MAC and save its original flash before its first upload; the XIAO backup cannot restore a different board. A power LED only establishes power, not USB data communication.
 
