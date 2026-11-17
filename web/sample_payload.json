@@ -1,0 +1,18 @@
+{
+  "device_id": "xiao-01",
+  "label": "Water flow sensor",
+  "boot_id": "example-boot-1",
+  "samples": [
+    {
+      "seq": 0,
+      "uptime_us": 1000000,
+      "dt_us": 250000,
+      "pulses": 5,
+      "total_pulses": 5,
+      "frequency_hz": 20.0,
+      "flow_lpm": null,
+      "total_l": null,
+      "pulse": null
+    }
+  ]
+}

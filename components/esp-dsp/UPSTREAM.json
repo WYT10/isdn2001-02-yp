@@ -1,0 +1,42 @@
+{
+  "repository": "https://github.com/espressif/esp-dsp",
+  "ref": "v1.8.2",
+  "scope": "Only float multiply-by-constant kernels and their headers; algorithm sources unmodified, final newlines normalized. CMake integration is local.",
+  "files": [
+    {
+      "path": "modules/math/mulc/float/dsps_mulc_f32_ae32.S",
+      "sha": "d1eade0403c39cc518e79d80eb2331ff113ff92c",
+      "url": "https://github.com/espressif/esp-dsp/blob/v1.8.2/modules/math/mulc/float/dsps_mulc_f32_ae32.S"
+    },
+    {
+      "path": "modules/math/mulc/float/dsps_mulc_f32_ansi.c",
+      "sha": "3c3c052f98c29ae9823bb9da3e55f310bcd60130",
+      "url": "https://github.com/espressif/esp-dsp/blob/v1.8.2/modules/math/mulc/float/dsps_mulc_f32_ansi.c"
+    },
+    {
+      "path": "modules/math/mulc/include/dsps_mulc_platform.h",
+      "sha": "97d95ce4587cedddf0cf96423592c968eba096aa",
+      "url": "https://github.com/espressif/esp-dsp/blob/v1.8.2/modules/math/mulc/include/dsps_mulc_platform.h"
+    },
+    {
+      "path": "modules/math/mulc/include/dsps_mulc.h",
+      "sha": "e030a8435762c92f2a27f01c8b79a37a01d41310",
+      "url": "https://github.com/espressif/esp-dsp/blob/v1.8.2/modules/math/mulc/include/dsps_mulc.h"
+    },
+    {
+      "path": "modules/common/include/dsp_err.h",
+      "sha": "4268eaaeefb582e3db8cfd8dea17e8ecfd264aa3",
+      "url": "https://github.com/espressif/esp-dsp/blob/v1.8.2/modules/common/include/dsp_err.h"
+    },
+    {
+      "path": "LICENSE",
+      "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "url": "https://github.com/espressif/esp-dsp/blob/v1.8.2/LICENSE"
+    },
+    {
+      "path": "modules/common/include/dsp_err_codes.h",
+      "sha": "b86e2914e0e9c0e5860d5553a23fdf9e88298c7c",
+      "url": "https://github.com/espressif/esp-dsp/blob/v1.8.2/modules/common/include/dsp_err_codes.h"
+    }
+  ]
+}
