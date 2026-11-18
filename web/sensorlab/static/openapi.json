@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "SensorLab data API",
+    "title": "LiveGreen data API",
     "version": "0.1.0",
     "description": "SQLite-backed water-flow research starter. All times stored in UTC. Missing calibration is null. Analytics are descriptive statistics, not a trained data-mining model."
   },
