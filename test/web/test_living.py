@@ -19,7 +19,7 @@ class LivingTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.app = create_app({**KEYS, "DATABASE": str(Path(self.temp.name) / "test.sqlite3"),
-                               "TESTING": True, "SESSION_COOKIE_SECURE": False})
+                               "TESTING": True, "SESSION_COOKIE_SECURE": False, "PUBLIC_DASHBOARD": False})
         self.client = self.app.test_client()
         self.viewer = {"Authorization": "Bearer " + KEYS["VIEWER_TOKEN"]}
 

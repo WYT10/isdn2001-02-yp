@@ -20,6 +20,7 @@ def create_app(test_config=None):
     app.config.from_mapping(
         DATABASE=str(Path(app.instance_path) / "flowlab.sqlite3"),
         SECRET_KEY=None, ADMIN_TOKEN=None, VIEWER_TOKEN=None, DEVICE_TOKEN=None,
+        PUBLIC_DASHBOARD=True,
         MAX_CONTENT_LENGTH=256 * 1024, SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=True,
         PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
@@ -41,11 +42,17 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
-        return render_template("living.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else render_template("login.html")
+        if app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer"):
+            return render_template("living.html", role=session.get("role"))
+        return render_template("login.html")
+
+    @app.get("/login")
+    def login_page():
+        return render_template("login.html")
 
     @app.get("/sensors")
     def sensors():
-        return render_template("dashboard.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else redirect(url_for("index"))
+        return render_template("dashboard.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else redirect(url_for("login_page"))
 
     @app.post("/login")
     def login():
@@ -84,7 +91,7 @@ def create_app(test_config=None):
     def response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        map_page = request.path == "/living" or (request.path == "/" and session.get("role") in ("admin", "viewer"))
+        map_page = request.path == "/living" or (request.path == "/" and (app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer")))
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin" if map_page else "same-origin"
         images = "https://tile.openstreetmap.org" if map_page else ""
         response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: {images}; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"

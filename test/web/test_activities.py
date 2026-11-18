@@ -15,7 +15,7 @@ class ActivityTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.client = create_app({**KEYS, "DATABASE": str(Path(folder.name) / "test.sqlite3"),
-                                  "TESTING": True, "SESSION_COOKIE_SECURE": False}).test_client()
+                                  "TESTING": True, "SESSION_COOKIE_SECURE": False, "PUBLIC_DASHBOARD": False}).test_client()
         self.auth = {"Authorization": "Bearer " + KEYS["VIEWER_TOKEN"]}
 
     def preview(self, **body):

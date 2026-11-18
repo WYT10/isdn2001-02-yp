@@ -40,7 +40,7 @@ class AppTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.config = {**KEYS, "DATABASE": str(Path(self.temp.name) / "test.sqlite3"),
-                       "TESTING": True, "SESSION_COOKIE_SECURE": False}
+                       "TESTING": True, "SESSION_COOKIE_SECURE": False, "PUBLIC_DASHBOARD": False}
         self.app = create_app(self.config)
         self.client = self.app.test_client()
 

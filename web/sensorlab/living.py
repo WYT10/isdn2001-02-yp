@@ -1,7 +1,7 @@
 """Read-only green-living previews. No personal activity or sensor DB writes."""
 import math
 
-from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 
 from .auth import require_roles
 
@@ -101,9 +101,9 @@ def preview(rows, scope, category, bandwidth, classification):
 
 @living.get("/living")
 def page():
-    if session.get("role") not in ("admin", "viewer"):
+    if current_app.config["PUBLIC_DASHBOARD"] is not True and session.get("role") not in ("admin", "viewer"):
         return redirect(url_for("index"))
-    return render_template("living.html", role=session["role"])
+    return render_template("living.html", role=session.get("role"))
 
 
 @living.get("/api/v1/living/example")

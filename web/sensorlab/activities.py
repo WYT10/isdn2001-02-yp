@@ -5,7 +5,7 @@ import math
 
 from flask import abort, jsonify, request
 
-from .auth import require_roles
+from .auth import allow_public_dashboard
 from .living import CATEGORIES, living, preview
 
 MTR_SOURCE = "https://www.mtr.com.hk/sustainability/assets/pdf/en/2025/MTR_Sustainable_Finance_Rpt_2025.pdf"
@@ -205,12 +205,12 @@ def activity_preview(body):
 
 
 @living.get("/api/v1/living/activities")
-@require_roles("viewer", "admin")
+@allow_public_dashboard
 def demo_activities():
     return jsonify(activity_preview({}))
 
 
 @living.post("/api/v1/living/activities/preview")
-@require_roles("viewer", "admin")
+@allow_public_dashboard
 def corrected_activities():
     return jsonify(activity_preview(request.get_json()))
