@@ -91,7 +91,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.preview(scope="inside", category="transport").json["green_index"], data["green_index"])
         self.assertEqual(data["footprint"]["bandwidth_m"], 150)
         locations = {(r["lat"], r["lon"]) for r in data["footprint"]["activities"]}
-        self.assertEqual(len(locations), 10)
+        self.assertEqual(len(locations), 11)
         broad = self.preview(bandwidth_m=750).json["footprint"]
         self.assertEqual(data["footprint"]["total_kg"], broad["total_kg"])
         for field in (data["footprint"], broad):
@@ -109,6 +109,23 @@ class ActivityTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertEqual(self.preview(**body).status_code, 400)
 
+    def test_subdivisions_reconcile_without_counting_unknowns_as_filler(self):
+        data = self.preview().json
+        self.assertEqual(len(data["records"]), 20)
+        self.assertAlmostEqual(data["footprint"]["total_kg"], 18.3404)
+        categories = {r["name"]: r for r in data["footprint"]["categories"]}
+        self.assertEqual(set(categories), {"shopping", "food", "energy", "transport", "other"})
+        for category, total in categories.items():
+            children = [r for r in data["records"] if r["category"] == category and r["co2e_kg"] is not None]
+            self.assertAlmostEqual(sum(r["co2e_kg"] for r in children), total["co2e_kg"])
+            self.assertTrue(all(r["subcategory"] and r["tree_label"] for r in children))
+        self.assertAlmostEqual(categories["other"]["co2e_kg"], .42)
+        shopping = self.preview(category="shopping").json
+        self.assertEqual(shopping["coverage"]["unknown_emissions"], 2)
+        self.assertEqual(len(shopping["footprint"]["activities"]), 6)
+        self.assertAlmostEqual(shopping["footprint"]["total_kg"], 8.35)
+        self.assertIsNone(next(r for r in shopping["records"] if r["id"] == "purchase-02")["co2e_kg"])
+
     def test_roles_csrf_and_research_data_are_preserved(self):
         self.assertEqual(self.client.get("/api/v1/living/activities").status_code, 401)
         self.assertEqual(self.client.get("/api/v1/living/activities", headers={"Authorization": "Bearer "+KEYS["DEVICE_TOKEN"]}).status_code, 403)
@@ -121,6 +138,8 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/v1/living/activities/preview", json={}, headers={"X-CSRF-Token": "browser-token"}).status_code, 200)
         self.preview(corrections=[{"id": "trip-02", "mode": "mtr"}])
         self.assertEqual(self.client.get("/api/v1/system", headers=admin).json["counts"], before)
-        self.assertIn("title-home", self.client.get("/").text)
+        page = self.client.get("/").text
+        self.assertNotIn('data-tab="home"', page)
+        self.assertLess(page.index('data-tab="overall"'), page.index('data-tab="shopping"'))
         self.assertIn("flow-chart", self.client.get("/sensors").text)
         self.assertNotIn("tile.openstreetmap.org", self.client.get("/sensors").headers["Content-Security-Policy"])

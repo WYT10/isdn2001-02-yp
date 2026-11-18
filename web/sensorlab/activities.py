@@ -15,8 +15,20 @@ MODES = {
     "car": {"name": "Car", "factor": .16, "source": "Synthetic car factor for interaction testing; occupancy and vehicle unknown", "region": "Demo only", "version": "demo-1"},
 }
 CATALOGUE = {
-    "shampoo": {"name": "Shampoo, 500 mL", "quantity": "1 bottle · 500 mL", "packaging_g": 52, "refill_g": 14},
-    "noodles": {"name": "Instant noodles, 5-pack", "quantity": "1 multipack · 500 g", "packaging_g": 22},
+    "shampoo": {"name": "Shampoo, 500 mL", "quantity": "1 bottle · 500 mL", "packaging_g": 52, "refill_g": 14, "subcategory": "Personal care", "tree_label": "Shampoo"},
+    "noodles": {"name": "Instant noodles, 5-pack", "quantity": "1 multipack · 500 g", "packaging_g": 22, "subcategory": "Groceries", "tree_label": "Noodles"},
+}
+DETAILS = {
+    "shower-01": ("Bathroom", "Shower"), "hotpot-01": ("Cooking", "Hot pot"),
+    "electricity-01": ("Household", "Home electricity"), "rail-01": ("Rail", "MTR"),
+    "trip-02": ("Unconfirmed", "Afternoon trip"), "bus-03": ("Bus", "Bus"),
+    "shampoo-01": ("Personal care", "Shampoo"), "purchase-02": ("Needs details", "Unidentified purchase"),
+    "food-01": ("Groceries", "Groceries"), "jeans-01": ("Clothing", "Jeans"),
+    "cafe-01": ("Food & drink", "Coffee"), "lunch-01": ("Food & drink", "Lunch"),
+    "market-01": ("Groceries", "Market groceries"), "refill-01": ("Home care", "Refill"),
+    "bakery-01": ("Food & drink", "Bakery"), "cable-01": ("Electronics", "USB cable"),
+    "notebook-01": ("Stationery", "Notebook"), "bottle-01": ("Household items", "Bottle"),
+    "digital-01": ("Services", "Digital services"), "waste-01": ("Waste", "Waste"),
 }
 
 
@@ -59,9 +71,20 @@ def scenario():
          "lat": 22.3157, "lon": 114.1671, "source": "Synthetic bakery purchase and assumed product estimate", "raw": "0.28 demo kg CO₂e per purchase; 8 g example packaging. Unverified scenario values."},
         {"id": "bus-03", "name": "Bus · Prince Edward", "kind": "trip", "category": "transport", "date": "2026-11-18", "scope": "outside", "owner": "Personal", "mode": "bus", "km": 3.2,
          "lat": 22.3269, "lon": 114.1674, "legs": ["Bus · 3.2 km"], "stations": "Illustrative stops", "source": "Synthetic bus journey; displayed location is an attribution point, not a tracked route"},
+        {"id": "cable-01", "name": "USB charging cable", "kind": "purchase", "category": "shopping", "date": "2026-11-18", "scope": "outside", "quantity": "1 cable", "packaging_g": 9, "co2e_kg": .62,
+         "lat": 22.3201, "lon": 114.1708, "source": "Synthetic electronics purchase and assumed product estimate", "raw": "0.62 demo kg CO₂e per cable; 9 g example packaging. No verified product factor or measured packaging weight."},
+        {"id": "notebook-01", "name": "Paper notebook", "kind": "purchase", "category": "shopping", "date": "2026-11-17", "scope": "outside", "quantity": "1 notebook", "packaging_g": 2, "co2e_kg": .36,
+         "lat": 22.3185, "lon": 114.1689, "source": "Synthetic stationery purchase and assumed product estimate", "raw": "0.36 demo kg CO₂e per notebook; 2 g example packaging. Unverified scenario values."},
+        {"id": "bottle-01", "name": "Reusable water bottle", "kind": "purchase", "category": "shopping", "date": "2026-11-16", "scope": "outside", "quantity": "1 bottle", "packaging_g": 16, "co2e_kg": .9,
+         "lat": 22.3198, "lon": 114.1657, "source": "Synthetic household-item purchase and assumed product estimate", "raw": "0.9 demo kg CO₂e counted once at purchase; 16 g example packaging. No avoided-emission or lifetime savings claim."},
+        {"id": "digital-01", "name": "Digital services", "kind": "other", "category": "other", "date": "2026-11-18", "quantity": "1 week of example services", "co2e_kg": .24,
+         "source": "Synthetic service activity, separate from metered household electricity", "raw": "0.24 demo kg CO₂e attributed to off-site services. No provider usage API or researched conversion is connected."},
+        {"id": "waste-01", "name": "Household waste", "kind": "other", "category": "other", "date": "2026-11-17", "quantity": "1 example collection", "co2e_kg": .18,
+         "source": "Synthetic waste-treatment activity; not measured or inferred from product packaging", "raw": "0.18 demo kg CO₂e for a separate example treatment boundary. No measured waste mass or researched factor is supplied."},
     ]
     result = [{**deepcopy(common), **deepcopy(row)} for row in rows]
     for row in result:
+        row["subcategory"], row["tree_label"] = DETAILS[row["id"]]
         if row["kind"] == "electricity":
             row.update(co2e_kg=row["kwh"] * .38, factor=.38, factor_unit="kg CO₂e/kWh", raw=row.get("raw", "") + " Carbon uses 0.38 demo kg CO₂e/kWh; no verified utility factor supplied.")
         if row["kind"] == "trip" and row["mode"]:

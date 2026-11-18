@@ -11,9 +11,9 @@
   function correct(change){corrections=corrections.filter(row=>row.id!==change.id).concat(change);save();refresh();}
   function button(label,action,style="button outline"){const node=el("button",{type:"button",class:style},label);node.addEventListener("click",action);return node;}
   function link(label,tab,id){const node=el("a",{href:"#"+tab,class:"text-button"},label);if(id)node.addEventListener("click",()=>openRecord(id));return node;}
-  function tabFor(row){return row.kind==="trip"?"transport":row.kind==="purchase"?"shopping":"sensors";}
+  function tabFor(row){return row.kind==="trip"?"transport":row.kind==="purchase"?"shopping":row.kind==="other"?"overall":"sensors";}
   function showTab(name,focus=false){
-    if(!["home","shopping","transport","sensors","overall"].includes(name))name="overall";
+    if(!["shopping","transport","sensors","overall"].includes(name))name="overall";
     document.querySelector(".living-app").dataset.activeTab=name;
     const shared=$("shared-filters"),slot=$("shared-filters-slot"),filterFields=$("overview-filter-fields");
     if(shared&&slot&&filterFields){if(name==="overall")filterFields.prepend(shared);else slot.append(shared);}
@@ -22,8 +22,9 @@
     document.dispatchEvent(new CustomEvent("sensorlab:tab",{detail:{tab:name}}));
     if(focus)$("title-"+name).focus({preventScroll:true});
   }
-  function openRecord(id){const row=data&&data.records.find(r=>r.id===id);if(!row)return;const tab=tabFor(row);location.hash=tab;showTab(tab);requestAnimationFrame(()=>{const node=$("record-"+id);if(node){node.scrollIntoView({block:"center",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth"});node.focus({preventScroll:true});}});}
-  window.addEventListener("hashchange",()=>{const name=location.hash.slice(1);if(["home","shopping","transport","sensors","overall"].includes(name))showTab(name,true);else if(name==="data-notes")$("data-notes").open=true;});
+  function openRecord(id){const row=data&&data.records.find(r=>r.id===id);if(!row)return;const tab=tabFor(row);location.hash=tab;showTab(tab);requestAnimationFrame(()=>{const node=$("record-"+id);if(node){for(let parent=node.parentElement;parent;parent=parent.parentElement)if(parent.tagName==="DETAILS")parent.open=true;node.scrollIntoView({block:"center",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth"});node.focus({preventScroll:true});}});}
+  window.addEventListener("hashchange",()=>{const name=location.hash.slice(1);if(["home","shopping","transport","sensors","overall"].includes(name))showTab(name,true);});
+  document.querySelectorAll('a[href="#data-notes"],a[href="#overall-inputs"]').forEach(link=>link.addEventListener("click",()=>{const target=$(link.hash.slice(1));target.open=true;}));
   document.addEventListener("sensorlab:open-record",event=>openRecord(event.detail.id));
   $("period-filter").addEventListener("change",refresh);
   $("reset-activities").addEventListener("click",()=>{corrections=[];save();refresh();});
@@ -51,6 +52,7 @@
     return el("details",{class:"correction-details"},el("summary",{},"Correct this demo session"),form);
   }
   function what(row){
+    if(row.kind==="other")return row.quantity+" · estimated "+fmt(row.co2e_kg)+" kg CO₂e.";
     if(row.kind==="water")return "Last shower used "+fmt(row.litres)+" L over "+fmt(row.minutes)+" min.";
     if(row.kind==="electricity")return (row.id.startsWith("hotpot")?"Last hot pot session used ":"Other recorded home uses consumed ")+fmt(row.kwh)+" kWh.";
     if(row.kind==="trip")return row.mode?row.quantity+" · estimated "+fmt(row.co2e_kg)+" kg CO₂e for the vehicle leg.":"Vehicle trip detected · confirm mode. No carbon estimate yet.";
@@ -58,6 +60,7 @@
     return row.quantity+(row.packaging_g!==null&&row.packaging_g!==undefined?" · "+fmt(row.packaging_g)+" g packaging recorded.":" · packaging weight unknown.");
   }
   function comparison(row){
+    if(row.kind==="other")return "This is an unverified example for a separate activity boundary. No comparable history is available.";
     if(row.baseline){const value=row.kind==="water"?row.litres:row.kwh,difference=value-row.baseline.value;
       if(Math.abs(difference)<=row.baseline.value*.1)return "About the same as recent "+(row.kind==="water"?"showers":"hot pot sessions")+" on this same fixture.";
       return fmt(Math.abs(difference))+" "+row.baseline.unit+" "+(difference>0?"more":"less")+" than your recent typical "+(row.kind==="water"?"shower":"hot pot session")+".";}
@@ -67,6 +70,7 @@
     return "There is not enough comparable appliance history to describe a usual range.";
   }
   function action(row){
+    if(row.kind==="other")return "Review the source and activity boundary before comparing this estimate.";
     if(row.kind==="water")return "Try a one-minute shorter shower next time, if practical.";
     if(row.kind==="electricity")return "Review the next session on this same appliance before changing a routine.";
     if(row.kind==="trip")return row.mode?"Review a feasible alternative for the next journey below.":"Confirm the travel mode, or skip and leave this journey unresolved.";
@@ -96,24 +100,29 @@
     card.append(details);return card;
   }
   function replaceRecords(id,rows){const host=$(id);host.replaceChildren(...rows.map(record));if(!rows.length)host.append(el("p",{class:"empty-records"},"No activities in this date range and setting."));}
+  function shoppingGroups(rows){
+    const host=$("shopping-records"),openItems=new Set([...host.querySelectorAll(".purchase-item[open]")].map(node=>node.dataset.id));
+    const groups=new Map();rows.forEach(row=>{const name=row.subcategory||"Other purchases";if(!groups.has(name))groups.set(name,[]);groups.get(name).push(row);});
+    host.replaceChildren();
+    [...groups].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,items])=>{
+      const known=items.filter(row=>row.co2e_kg!==null),total=known.reduce((sum,row)=>sum+row.co2e_kg,0);
+      const section=el("section",{class:"shopping-group"},el("header",{},el("h2",{},name),el("span",{},items.length+" "+(items.length===1?"purchase":"purchases")),el("strong",{},known.length?fmt(total)+" kg CO₂e":"Estimate unknown")));
+      items.forEach(row=>{
+        const detail=el("details",{class:"purchase-item","data-id":row.id});detail.open=openItems.has(row.id);
+        detail.append(el("summary",{},el("span",{class:"purchase-line"},el("span",{class:"purchase-name"},row.name),el("span",{class:"purchase-quantity"},row.quantity||"Items not identified"),el("span",{class:"purchase-amount"},row.co2e_kg===null?"Unknown":fmt(row.co2e_kg)+" kg CO₂e"))),record(row));section.append(detail);
+      });host.append(section);
+    });
+    if(!rows.length)host.append(el("p",{class:"empty-records"},"No purchases match this period and setting."));
+  }
   function summary(label,value,note){return el("article",{},el("span",{class:"step-label"},label),el("strong",{},value),el("p",{},note));}
-  function plainChange(comparison){const ratio=comparison.change_fraction;if(ratio===null)return "No comparable reference total is available.";return "Tracked estimates were "+fmt(Math.abs(ratio)*100,1)+"% "+(ratio>=0?"lower":"higher")+" than the named reference period.";}
-  function renderHome(){
-    const shower=data.records.find(row=>row.id==="shower-01"), pending=data.records.filter(row=>needsMode(row)||row.status==="needs_items");
-    if(shower&&shower.litres>shower.baseline.value*1.1){text("action-title","A little less time, a little less water.");text("action-copy",fmt(shower.litres-shower.baseline.value)+" L more than your recent typical shower. Try a one-minute shorter shower next time.");$("action-link").textContent="See water use →";$("action-link").href="#sensors";$("action-link").onclick=()=>openRecord(shower.id);$("action-quantity").replaceChildren(fmt(shower.litres),el("small",{},"litres · demo shower"));}
-    else{text("action-title","Your tracked week, at a glance.");text("action-copy",plainChange(data.comparison)+" Review what is covered before drawing conclusions.");$("action-link").textContent="See what changed →";$("action-link").href="#overall";$("action-link").onclick=null;$("action-quantity").replaceChildren(fmt(data.comparison.total_kg,1),el("small",{},"kg CO₂e · demo"));}
-    text("input-count",pending.length+" unresolved");const host=$("home-inputs");host.replaceChildren();
-    const active=pending.filter(row=>row.status!=="unresolved_skipped").slice(0,2);
-    active.forEach(row=>{const item=el("article",{class:"input-card"},el("span",{class:"step-label"},row.kind==="trip"?"A journey needs context":"A purchase needs detail"),el("h3",{},row.kind==="trip"?"How did you travel?":"What was in this purchase?"),el("p",{},row.kind==="trip"?"Afternoon journey · mode not confirmed.":"HK$45 at the supermarket. Items are still unknown."));
-      if(row.kind==="trip")item.append(inputButtons(row));else item.append(link("Add items →","shopping",row.id));host.append(item);});
-    if(!active.length)host.append(el("p",{class:"empty-records"},pending.length?"Nothing more to ask right now. Skipped inputs remain in your inbox.":"You’re up to date with the demo inputs."));
+  function renderInputs(){
+    const pending=data.records.filter(row=>needsMode(row)||row.status==="needs_items");
+    text("input-count","Needs input · "+pending.length);
+    $("overall-inputs").hidden=!pending.length;
     $("input-inbox").replaceChildren(...pending.map(row=>el("div",{class:"inbox-row"},el("span",{},row.name+" · "+(row.status==="unresolved_skipped"?"skipped, still unresolved":"needs input")),link("Review →",tabFor(row),row.id))));
-    const largest=data.comparison.largest_change;
-    text("week-copy",plainChange(data.comparison)+(largest?" "+largest.category.charAt(0).toUpperCase()+largest.category.slice(1)+" accounted for "+fmt(Math.abs(largest.change_kg))+" kg of the "+(largest.change_kg>=0?"decrease":"increase")+".":""));
-    text("week-coverage","Partial demo coverage · "+data.coverage.pending_trips+" unresolved trips · "+data.coverage.unknown_emissions+" records without a carbon estimate. Comparison: "+data.period.start+"–"+data.period.end+" versus "+data.period.reference_start+"–"+data.period.reference_end+".");
   }
   function render(){
-    renderHome();
+    renderInputs();
     const category=data.footprint.category,water=data.records.filter(r=>r.kind==="water"),power=data.records.filter(r=>r.kind==="electricity"),resourceCards=[];
     if(category==="all"||category==="water")resourceCards.push(summary("Water sessions recorded",fmt(water.reduce((sum,r)=>sum+r.litres,0))+" L",water.length+" demo sessions. Water carbon remains unknown."));
     if(category==="all"||category==="energy")resourceCards.push(summary("Electricity recorded",fmt(power.reduce((sum,r)=>sum+r.kwh,0))+" kWh",power.length+" demo uses. Separate uses exclude the hot pot."));
@@ -121,7 +130,9 @@
     if(water.length&&(category==="all"||category==="water"))$("resource-summary").firstChild.append(link("See water sessions →","sensors",water[0].id));
     const purchases=data.records.filter(r=>r.kind==="purchase"),knownPacks=purchases.filter(r=>r.packaging_g!==null&&r.packaging_g!==undefined),estimated=purchases.filter(r=>r.co2e_kg!==null);
     $("shopping-summary").replaceChildren(summary("Packaging recorded",fmt(knownPacks.reduce((sum,r)=>sum+r.packaging_g,0))+" g",knownPacks.length+" purchases with example weights; "+(purchases.length-knownPacks.length)+" unknown."),summary("Estimated purchase emissions",estimated.length?fmt(estimated.reduce((sum,r)=>sum+r.co2e_kg,0))+" kg CO₂e":"Unknown",estimated.length+" unverified demo estimates. Unknown purchases excluded."),summary("Purchases logged",purchases.length,purchases.filter(r=>r.status==="needs_items").length+" need item details."));
-    replaceRecords("shopping-records",purchases);
+    shoppingGroups(purchases);
+    replaceRecords("other-records",data.records.filter(r=>r.kind==="other"));
+    $("other-activities").hidden=!data.records.some(r=>r.kind==="other");
     const trips=data.records.filter(r=>r.kind==="trip").sort((a,b)=>b.date.localeCompare(a.date));replaceRecords("recent-trip",trips.slice(0,1));replaceRecords("transport-records",trips.slice(1));document.querySelector(".commute-panel").hidden=!trips.length;
     replaceRecords("water-records",data.records.filter(r=>r.kind==="water"));replaceRecords("electricity-records",data.records.filter(r=>r.kind==="electricity"));
     const c=data.coverage; text("coverage-copy",c.known_records+" of "+c.total_records+" selected records have a carbon estimate. Coverage is incomplete in both periods.");

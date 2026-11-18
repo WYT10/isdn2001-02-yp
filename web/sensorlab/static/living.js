@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const format = (value, digits = 2) => Number(value).toLocaleString(undefined, {maximumFractionDigits: digits});
   const title = value => value.charAt(0).toUpperCase() + value.slice(1);
-  const colors = {energy: "#2d6b55", transport: "#65917e", shopping: "#a58c57", food: "#87964d", water: "#568a9b", other: "#82718f"};
+  const colors = {energy: "#24634f", transport: "#65917e", shopping: "#a58c57", food: "#87964d", water: "#587f91", other: "#6d8b98"};
   const csrf = document.querySelector('meta[name="csrf-token"]').content;
   const state = {data: null, activityData: null, request: 0, layers: null, dark: false,
     view: "contour", surface: null, viewRequest: 0};
@@ -14,7 +14,8 @@
   }).addTo(map);
   L.control.scale({imperial:false, maxWidth:100}).addTo(map);
   tiles.on("tileerror", () => {$("tile-status").hidden = false;});
-  let surfaceRefresh = null;
+  let surfaceRefresh = null, initialViewSet = false;
+  function defaultMapView(){if(!initialViewSet&&state.data&&document.querySelector(".living-app").dataset.activeTab==="overall"){initialViewSet=true;setMapView("3d");}}
   tiles.on("tileload", () => {
     $("tile-status").hidden = true;
     if(state.view==="3d"&&state.surface){clearTimeout(surfaceRefresh);surfaceRefresh=setTimeout(updateSurface,150);}
@@ -62,7 +63,7 @@
     $("index-needle").setAttribute("x2",String(150-92*Math.cos(angle)));
     $("index-needle").setAttribute("y2",String(145-92*Math.sin(angle)));
     $("index-needle").style.visibility=value===null?"hidden":"visible";
-    const text=value===null?"No reference":(value>0?"+":"")+value.toFixed(2);
+    const text=value===null?"No score":(value>0?"+":"")+value.toFixed(2);
     set("gauge-score",text);
     set("green-index-value",text);
     $("green-index-gauge").setAttribute("aria-label","Synthetic green index "+text+". Minus one left, zero up, plus one right.");
@@ -74,25 +75,50 @@
     map.getContainer().dataset.zoom=String(map.getZoom());
     updateSurface();if(state.view==="3d"&&state.surface)state.surface.reset();
   }
-  function chooseCategory(name) {$("category-filter").value = name; refresh();}
+  async function chooseCategory(name) {$("category-filter").value = name;await refresh();(name==="all"?$("footprint-treemap"):$("clear-category")).focus({preventScroll:true});}
   function treemap() {
     const host = $("footprint-treemap"); host.replaceChildren();
     const data = state.data;
     if(!host.clientWidth||!host.clientHeight)return;
-    const leaves = data.categories.filter(row => row.co2e_kg > 0);
-    if (!leaves.length) {host.textContent = "No positive emissions in this selection."; return;}
-    const root = d3.hierarchy({children:leaves}).sum(row=>row.co2e_kg || 0).sort((a,b)=>b.value-a.value);
-    d3.treemap().size([host.clientWidth,host.clientHeight]).paddingInner(0).round(false)(root);
-    root.leaves().forEach(node=>{
-      const row=node.data, width=node.x1-node.x0, height=node.y1-node.y0;
-      const button=document.createElement("button");button.type="button";button.className="tree-tile";
-      Object.assign(button.style,{left:node.x0+"px",top:node.y0+"px",width:width+"px",height:height+"px",background:colors[row.name]});
-      const label=title(row.name)+", "+format(row.share*100,1)+"%, "+format(row.co2e_kg)+" kg CO₂e";
-      button.setAttribute("aria-label",label);button.title=label;
-      if(width>70 && height>40){const name=document.createElement("strong"),share=document.createElement("span");name.textContent=title(row.name);share.textContent=format(row.share*100,1)+"%";button.append(name,share);
-        if(height>110){const amount=document.createElement("small");amount.textContent=format(row.co2e_kg)+" kg CO₂e";button.append(amount);}}
-      button.addEventListener("click",()=>chooseCategory(row.name));host.append(button);
+    const categories=data.categories.filter(row=>row.co2e_kg>0).map(category=>({name:category.name,children:window.SensorActivities.records().filter(row=>row.category===category.name&&row.co2e_kg>0)}));
+    host.tabIndex=-1;
+    if(!categories.length){host.textContent="No positive emissions in this selection.";return;}
+    const root=d3.hierarchy({children:categories}).sum(row=>row.children?0:row.co2e_kg||0).sort((a,b)=>b.value-a.value);
+    function tile(node,x0,y0,x1,y1){
+      const named=new Map((node.children||[]).map(child=>[child.data.name,child]));
+      if(node.depth!==0||named.size!==5||!["shopping","food","energy","transport","other"].every(name=>named.has(name)))return d3.treemapBinary(node,x0,y0,x1,y1);
+      const shopping=named.get("shopping"),food=named.get("food"),energy=named.get("energy"),transport=named.get("transport"),other=named.get("other");
+      const left=shopping.value+food.value,right=energy.value+transport.value+other.value;
+      const split=x0+(x1-x0)*left/node.value,lower=y0+(y1-y0)*shopping.value/left;
+      const base=y0+(y1-y0)*energy.value/right,small=split+(x1-split)*transport.value/(transport.value+other.value);
+      [[shopping,x0,y0,split,lower],[food,x0,lower,split,y1],[energy,split,y0,x1,base],[transport,split,base,small,y1],[other,small,base,x1,y1]].forEach(([child,a,b,c,d])=>Object.assign(child,{x0:a,y0:b,x1:c,y1:d}));
+    }
+    d3.treemap().tile(tile).size([host.clientWidth,host.clientHeight]).padding(0).round(false)(root);
+    host.dataset.total=String(root.value);host.dataset.leaves=String(root.leaves().length);
+    root.children.forEach(category=>{
+      const width=category.x1-category.x0,height=category.y1-category.y0,group=document.createElement("div");group.className="tree-group";group.dataset.category=category.data.name;group.setAttribute("role","group");group.setAttribute("aria-label",title(category.data.name));
+      Object.assign(group.style,{left:category.x0+"px",top:category.y0+"px",width:width+"px",height:height+"px",background:colors[category.data.name]});
+      category.children.forEach((node,index)=>{
+        const row=node.data,w=node.x1-node.x0,h=node.y1-node.y0,button=document.createElement("button");button.type="button";button.className="tree-tile";button.dataset.recordId=row.id;button.dataset.value=String(row.co2e_kg);
+        Object.assign(button.style,{left:(node.x0-category.x0)+"px",top:(node.y0-category.y0)+"px",width:w+"px",height:h+"px",background:d3.interpolateRgb(colors[row.category],"#fff")((index%3)*.035)});
+        const label=row.name+", "+row.date+", "+format(row.co2e_kg)+" kg CO₂e. Open activity";button.setAttribute("aria-label",label);button.title=label;
+        const itemName=row.tree_label||row.name;
+        if(w>44&&h>25){const name=document.createElement("strong");name.textContent=itemName;name.style.fontSize=(w>130&&h>100?13:w>75?11:9)+"px";button.append(name);}
+        button.addEventListener("click",()=>window.SensorActivities.openRecord(row.id));group.append(button);
+      });
+      const largest=category.children[0],w=largest.x1-largest.x0,h=largest.y1-largest.y0;
+      if(w>44&&h>48){
+        const header=document.createElement("button");header.type="button";header.className="tree-category";header.dataset.category=category.data.name;
+        const compact=w<135||h<110,share=format(category.value/root.value*100,1)+"%",label=title(category.data.name)+", "+share+", "+format(category.value)+" kg CO₂e. Filter category";
+        header.title=label;header.setAttribute("aria-label",label);
+        Object.assign(header.style,{left:(largest.x0-category.x0)+"px",top:(largest.y0-category.y0)+"px",width:w+"px",height:Math.max(30,h-25)+"px",fontSize:(w<75?11:compact?15:22)+"px"});
+        const name=document.createElement("strong");name.textContent=title(category.data.name);header.append(name);
+        if(w>60&&h>70){const percent=document.createElement("span");percent.textContent=share;percent.style.fontSize=(compact?22:36)+"px";header.append(percent);}
+        header.addEventListener("click",()=>chooseCategory(category.data.name));group.append(header);
+      }
+      host.append(group);
     });
+    set("treemap-selection",(data.category==="all"?"All categories":title(data.category))+", "+root.leaves().length+" activities with known estimates. Category names filter; item labels open their records.");
   }
   function ramp(t) {
     const stops=[[0,[225,238,234]],[.2,[82,158,171]],[.4,[119,181,144]],[.6,[232,206,121]],[.8,[230,155,96]],[1,[216,92,80]]];
@@ -154,17 +180,17 @@
     try {
       const result=await window.SensorActivities.refresh(filters);if(!result||requestId!==state.request)return;
       state.activityData=result;indexPreview(result.green_index);const data=result.footprint;
-      render(data,fitMap);$("living-error").hidden=true;
+      render(data,fitMap);defaultMapView();$("living-error").hidden=true;
     } catch(error){if(requestId!==state.request)return;set("living-error",error.message);$("living-error").hidden=false;set("living-status","Preview unavailable");}
   }
   $("scope-filter").addEventListener("change",()=>refresh());$("category-filter").addEventListener("change",()=>refresh());$("smoothing").addEventListener("change",()=>refresh(false));
   $("clear-category").addEventListener("click",()=>chooseCategory("all"));$("fit-map").addEventListener("click",fit);
   $("theme-button").addEventListener("click",()=>{state.dark=!state.dark;document.querySelector(".living-app").classList.toggle("dark",state.dark);$("theme-button").setAttribute("aria-pressed",String(state.dark));set("theme-button",state.dark?"Light map":"Dark map");if(state.data){landscape();updateSurface();}});
   $("export-living").addEventListener("click",()=>{if(!state.activityData)return;const blob=new Blob([JSON.stringify(window.SensorActivities.export(),null,2)],{type:"application/json"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="sensorlab-activity-demo.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
-  $("open-category-records").addEventListener("click",()=>{const category=$("category-filter").value;location.hash=category==="transport"?"transport":["shopping","food"].includes(category)?"shopping":["energy","water"].includes(category)?"sensors":"home";});
+  $("open-category-records").addEventListener("click",()=>{const category=$("category-filter").value;if(category==="other"){$("other-activities").open=true;$("other-activities").scrollIntoView({block:"start"});}else location.hash=category==="transport"?"transport":["shopping","food"].includes(category)?"shopping":["energy","water"].includes(category)?"sensors":"overall";});
   $("reflection-button").addEventListener("click",()=>$("reflection-dialog").showModal());["close-reflection","dismiss-reflection"].forEach(id=>$(id).addEventListener("click",()=>$("reflection-dialog").close()));
-  $("contour-view-button").addEventListener("click",()=>setMapView("contour"));
-  $("surface-view-button").addEventListener("click",()=>setMapView("3d"));
+  $("contour-view-button").addEventListener("click",()=>{initialViewSet=true;setMapView("contour");});
+  $("surface-view-button").addEventListener("click",()=>{initialViewSet=true;setMapView("3d");});
   $("reset-surface").addEventListener("click",()=>{if(state.surface)state.surface.reset();});
   $("rotate-surface-left").addEventListener("click",()=>{if(state.surface)state.surface.rotate(-Math.PI/8);});
   $("rotate-surface-right").addEventListener("click",()=>{if(state.surface)state.surface.rotate(Math.PI/8);});
@@ -173,7 +199,7 @@
   new ResizeObserver(()=>{if(state.data)treemap();map.invalidateSize({animate:false});updateSurface();}).observe($("footprint-map"));
   document.addEventListener("sensorlab:refresh",()=>refresh());
   document.addEventListener("sensorlab:tab",event=>{
-    if(event.detail.tab==="overall"){requestAnimationFrame(()=>{map.invalidateSize({animate:false});if(state.data){treemap();fit();if(state.surface)state.surface.setVisible(state.view==="3d");}});}
+    if(event.detail.tab==="overall"){requestAnimationFrame(()=>{map.invalidateSize({animate:false});if(state.data){treemap();fit();defaultMapView();if(state.surface)state.surface.setVisible(state.view==="3d");}});}
     else {if(state.surface)state.surface.setVisible(false);if($("category-filter").value!=="all"){$("category-filter").value="all";refresh();}}
   });
   refresh();
