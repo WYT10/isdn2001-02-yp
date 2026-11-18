@@ -41,7 +41,11 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
-        return render_template("dashboard.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else render_template("login.html")
+        return render_template("living.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else render_template("login.html")
+
+    @app.get("/sensors")
+    def sensors():
+        return render_template("dashboard.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else redirect(url_for("index"))
 
     @app.post("/login")
     def login():
@@ -80,8 +84,9 @@ def create_app(test_config=None):
     def response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin" if request.path == "/living" else "same-origin"
-        images = "https://tile.openstreetmap.org" if request.path == "/living" else ""
+        map_page = request.path == "/living" or (request.path == "/" and session.get("role") in ("admin", "viewer"))
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin" if map_page else "same-origin"
+        images = "https://tile.openstreetmap.org" if map_page else ""
         response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: {images}; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         if not request.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store"
@@ -101,6 +106,7 @@ def create_app(test_config=None):
     from .api import api
     app.register_blueprint(api)
     from .living import living
+    from . import activities
     app.register_blueprint(living)
 
     @app.cli.command("seed-demo")

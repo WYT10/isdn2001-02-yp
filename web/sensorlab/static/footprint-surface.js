@@ -126,7 +126,7 @@ export function createFootprintSurface(host, labelHost, onUnavailable) {
       const x=(pixel.x/map.getSize().x-.5)*width,z=(pixel.y/map.getSize().y-.5)*depth,y=grid?sampleDensity(grid,point.lat,point.lon)/grid.max*30:0;
       const pin=new THREE.Mesh(new THREE.SphereGeometry(.75,10,8),new THREE.MeshBasicMaterial({color:0x254d3b}));pin.position.set(x,y+1,z);group.add(pin);
       if(grouped.size<=3||point.rows.some(row=>/home energy|road commute|cafe/i.test(row.name))){
-        const name=point.rows.length>1?"Home activities":point.rows[0].name;
+        const name=point.rows.length>1?(point.rows.every(row=>row.scope==="inside")?"Home activities":"Activities here"):point.rows[0].name;
         label(name+" · "+point.total.toLocaleString(undefined,{maximumFractionDigits:2})+" kg CO₂e",new THREE.Vector3(x,y+5,z));
       }
     });

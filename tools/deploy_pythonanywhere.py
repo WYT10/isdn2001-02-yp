@@ -56,7 +56,7 @@ def bundle(destination, files):
             archive.writestr(name, content)
 
 
-def http(method, url, *, token=None, data=None, content_type=None):
+def http(method, url, *, token=None, data=None, content_type=None, timeout=20):
     headers = {"User-Agent": "SensorLab-deploy/0.1"}
     if token:
         headers["Authorization"] = "Token " + token
@@ -64,7 +64,7 @@ def http(method, url, *, token=None, data=None, content_type=None):
         headers["Content-Type"] = content_type
     request = Request(url, method=method, data=data, headers=headers)
     try:
-        with urlopen(request, timeout=20) as response:
+        with urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
     except HTTPError as error:
         return error.code, error.read()
@@ -81,12 +81,12 @@ class PythonAnywhere:
         self.interval = interval
         self.previous_request = 0
 
-    def call(self, method, path, data=None, content_type=None, expected=(200,)):
+    def call(self, method, path, data=None, content_type=None, expected=(200,), timeout=20):
         wait = self.interval - (time.monotonic() - self.previous_request)
         if wait > 0:
             time.sleep(wait)
         self.previous_request = time.monotonic()
-        status, body = http(method, self.base + path, token=self.token, data=data, content_type=content_type)
+        status, body = http(method, self.base + path, token=self.token, data=data, content_type=content_type, timeout=timeout)
         if status not in expected:
             raise RuntimeError(f"PythonAnywhere API returned HTTP {status} for {method}; check API token, account and rate limits")
         return status, body
@@ -106,7 +106,8 @@ class PythonAnywhere:
         self.call("DELETE", "files/path" + quote(path, safe="/"), expected=(204, 404))
 
     def reload(self, domain):
-        self.call("POST", "webapps/" + quote(domain, safe="") + "/reload/", data=b"", expected=(200, 201))
+        # The provider can wait for workers to finish before answering a reload.
+        self.call("POST", "webapps/" + quote(domain, safe="") + "/reload/", data=b"", expected=(200, 201), timeout=90)
 
 
 def health_check(domain, expected_release=None):

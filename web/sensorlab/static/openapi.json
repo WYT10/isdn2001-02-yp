@@ -476,6 +476,167 @@
           }
         }
       }
+    },
+    "/api/v1/living/activities": {
+      "get": {
+        "summary": "Fixed synthetic activity scenario (viewer/admin)",
+        "responses": {
+          "200": {
+            "description": "Synthetic records, named-reference comparison, coverage and KDE from the same selected records. No research DB writes."
+          },
+          "400": {
+            "description": "Unsupported fields, correction or range"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Viewer/admin required; session POSTs require X-CSRF-Token"
+          }
+        }
+      }
+    },
+    "/api/v1/living/activities/preview": {
+      "post": {
+        "summary": "Recalculate the demo from bounded corrections; no persistence",
+        "description": "Dates are fixed demo periods. Unknown emissions remain null and excluded. Corrections are explicit selections, not sensor calibration or real purchases. Browser callers need CSRF.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "period": {
+                    "enum": [
+                      "week",
+                      "fortnight"
+                    ],
+                    "default": "week"
+                  },
+                  "scope": {
+                    "enum": [
+                      "all",
+                      "inside",
+                      "outside"
+                    ]
+                  },
+                  "category": {
+                    "enum": [
+                      "all",
+                      "energy",
+                      "water",
+                      "transport",
+                      "shopping",
+                      "food",
+                      "other"
+                    ]
+                  },
+                  "bandwidth_m": {
+                    "enum": [
+                      250,
+                      500,
+                      750,
+                      1250,
+                      2000
+                    ]
+                  },
+                  "corrections": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "mode"
+                          ],
+                          "properties": {
+                            "id": {
+                              "enum": [
+                                "rail-01",
+                                "trip-02"
+                              ]
+                            },
+                            "mode": {
+                              "enum": [
+                                "mtr",
+                                "bus",
+                                "car",
+                                "skip"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "catalogue"
+                          ],
+                          "properties": {
+                            "id": {
+                              "const": "purchase-02"
+                            },
+                            "catalogue": {
+                              "enum": [
+                                "shampoo",
+                                "noodles"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "litres",
+                            "minutes"
+                          ],
+                          "properties": {
+                            "id": {
+                              "const": "shower-01"
+                            },
+                            "litres": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 1000
+                            },
+                            "minutes": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 120
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Synthetic records, named-reference comparison, coverage and KDE from the same selected records. No research DB writes."
+          },
+          "400": {
+            "description": "Unsupported fields, correction or range"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Viewer/admin required; session POSTs require X-CSRF-Token"
+          }
+        }
+      }
     }
   },
   "components": {

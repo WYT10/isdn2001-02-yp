@@ -100,6 +100,14 @@ class DeployTests(unittest.TestCase):
         for call in request.call_args_list:
             self.assertNotIn("token", call.kwargs)
 
+    def test_reload_allows_worker_restart_without_extending_file_request_timeout(self):
+        client = deploy.PythonAnywhere("researcher", "account-token", interval=0)
+        with patch.object(deploy, "http", return_value=(200, b"")) as request:
+            client.reload("researcher.pythonanywhere.com")
+            self.assertEqual(request.call_args.kwargs["timeout"], 90)
+            client.put_file("/home/researcher/mysite/app.py", b"source")
+            self.assertEqual(request.call_args.kwargs["timeout"], 20)
+
     def test_account_probe_is_read_only_and_does_not_return_private_settings(self):
         client = deploy.PythonAnywhere("researcher", "private-account-token", interval=0)
         responses = [(200, b'{"release":"expected"}'),

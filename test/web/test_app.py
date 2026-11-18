@@ -204,7 +204,8 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.login().status_code, 302)
         page = self.client.get("/").get_data(as_text=True)
         csrf = re.search(r'name="csrf-token" content="([^"]+)"', page).group(1)
-        self.assertIn("Your sensors, connected.", page)
+        self.assertIn("title-home", page)
+        self.assertIn("Your sensors, connected.", self.client.get("/sensors").get_data(as_text=True))
         body = {"message": "Browser note"}
         self.assertEqual(self.client.post("/api/v1/feedback", json=body).status_code, 403)
         self.assertEqual(self.client.post("/api/v1/feedback", json=body, headers={"X-CSRF-Token": csrf}).status_code, 201)

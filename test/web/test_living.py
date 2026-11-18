@@ -95,5 +95,5 @@ class LivingTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("https://tile.openstreetmap.org", page.headers["Content-Security-Policy"])
         self.assertEqual(page.headers["Referrer-Policy"], "strict-origin-when-cross-origin")
-        self.assertNotIn("tile.openstreetmap.org", self.client.get("/").headers["Content-Security-Policy"])
+        self.assertNotIn("tile.openstreetmap.org", self.client.get("/sensors").headers["Content-Security-Policy"])
         self.assertIn("green-index-gauge", page.get_data(as_text=True))
