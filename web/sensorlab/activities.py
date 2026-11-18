@@ -22,7 +22,7 @@ CATALOGUE = {
 
 def scenario():
     common = {"classification": "synthetic", "status": "confirmed_demo", "co2e_kg": None,
-              "lat": 22.3364, "lon": 114.2655, "owner": "Household", "scope": "inside",
+              "lat": 22.3226, "lon": 114.1696, "owner": "Household", "scope": "inside",
               "source": "Synthetic scenario; not connected to your sensor or purchase history",
               "factor": None, "region": "Demo only", "version": "demo-1"}
     rows = [
@@ -35,18 +35,30 @@ def scenario():
         {"id": "electricity-01", "name": "Other home electricity", "kind": "electricity", "category": "energy", "date": "2026-11-17", "kwh": 10,
          "source": "Synthetic separately metered home uses, excluding the hot pot", "raw": "10 kWh is a demo total, not a sum of live plug readings."},
         {"id": "rail-01", "name": "To campus", "kind": "trip", "category": "transport", "date": "2026-11-18", "scope": "outside", "owner": "Personal", "mode": "mtr", "km": 23.4,
-         "lat": 22.328, "lon": 114.246, "quantity": "Walk + MTR + walk", "stations": "Sha Tin → Hang Hau (illustrative confirmed stops)",
+         "lat": 22.3130, "lon": 114.1707, "quantity": "Walk + MTR + walk", "stations": "Sha Tin → Hang Hau (illustrative confirmed stops)",
          "legs": ["Walk · 8 min", "MTR · 23.4 km · 28 min", "Walk · 12 min"], "source": "Demo user-confirmed journey; distance and stops are illustrative, not route-API output"},
         {"id": "trip-02", "name": "Afternoon journey", "kind": "trip", "category": "transport", "date": "2026-11-17", "scope": "outside", "owner": "Personal", "mode": None, "km": 12,
-         "lat": 22.322, "lon": 114.258, "status": "needs_mode", "source": "Synthetic ambiguous motion event; no actual GPS or activity-recognition service is running", "legs": ["Vehicle leg · mode unresolved"], "stations": "Not confirmed"},
+         "lat": 22.3048, "lon": 114.1716, "status": "needs_mode", "source": "Synthetic ambiguous motion event; no actual GPS or activity-recognition service is running", "legs": ["Vehicle leg · mode unresolved"], "stations": "Not confirmed"},
         {"id": "shampoo-01", "name": "Shampoo, 500 mL", "kind": "purchase", "category": "shopping", "date": "2026-11-16", "scope": "outside", "quantity": "1 bottle · 500 mL", "catalogue": "shampoo", "packaging_g": 52, "refill_g": 14,
-         "lat": 22.3075, "lon": 114.2600, "source": "Demo item name and packaging fields adapted from the supplied Shopping.json; weights are unverified examples, not a payment/API inference"},
+         "lat": 22.3185, "lon": 114.1689, "source": "Demo item name and packaging fields adapted from the supplied Shopping.json; weights are unverified examples, not a payment/API inference"},
         {"id": "purchase-02", "name": "Supermarket purchase", "kind": "purchase", "category": "shopping", "date": "2026-11-17", "scope": "outside", "spend_hkd": 45, "quantity": "Items not identified", "packaging_g": None,
-         "lat": 22.3075, "lon": 114.2600, "status": "needs_items", "source": "Synthetic receipt total only. Spend does not establish product, packaging or footprint."},
+         "lat": 22.3185, "lon": 114.1689, "status": "needs_items", "source": "Synthetic receipt total only. Spend does not establish product, packaging or footprint."},
         {"id": "food-01", "name": "Logged grocery items", "kind": "purchase", "category": "food", "date": "2026-11-16", "scope": "outside", "quantity": "0.5 kg · comparable food category", "packaging_g": 22, "co2e_kg": 2.6,
-         "factor": 5.2, "factor_unit": "kg CO₂e/kg food", "lat": 22.312, "lon": 114.251, "source": "Synthetic receipt lines and comparable-product lifecycle factor; not an Agribalyse lookup", "raw": "0.5 kg × 5.2 demo kg CO₂e/kg = 2.6 kg CO₂e. Whole-product lifecycle scope; not packaging-only."},
+         "factor": 5.2, "factor_unit": "kg CO₂e/kg food", "lat": 22.3162, "lon": 114.1702, "source": "Synthetic receipt lines and comparable-product lifecycle factor; not an Agribalyse lookup", "raw": "0.5 kg × 5.2 demo kg CO₂e/kg = 2.6 kg CO₂e. Whole-product lifecycle scope; not packaging-only."},
         {"id": "jeans-01", "name": "Cotton denim jeans", "kind": "purchase", "category": "shopping", "date": "2026-11-16", "scope": "outside", "owner": "Personal", "quantity": "1 pair", "packaging_g": None, "co2e_kg": 5.4,
-         "lat": 22.312, "lon": 114.251, "source": "Unverified synthetic product estimate from the supplied Shopping.json; not a verified lifecycle factor", "raw": "5.4 kg CO₂e per demo purchase. Counted once at purchase, with no daily amortization added."},
+         "lat": 22.3201, "lon": 114.1708, "source": "Unverified synthetic product estimate from the supplied Shopping.json; not a verified lifecycle factor", "raw": "5.4 kg CO₂e per demo purchase. Counted once at purchase, with no daily amortization added."},
+        {"id": "cafe-01", "name": "Cafe · Jordan", "kind": "purchase", "category": "food", "date": "2026-11-18", "scope": "outside", "owner": "Personal", "quantity": "1 coffee", "packaging_g": 12, "co2e_kg": .48,
+         "lat": 22.3075, "lon": 114.1712, "source": "Synthetic cafe visit and assumed product estimate, not a merchant or lifecycle API", "raw": "0.48 demo kg CO₂e per coffee; 12 g example cup packaging. Unverified values with different scopes."},
+        {"id": "lunch-01", "name": "Lunch · Yau Ma Tei", "kind": "purchase", "category": "food", "date": "2026-11-18", "scope": "outside", "owner": "Personal", "quantity": "1 meal", "packaging_g": 18, "co2e_kg": 1.1,
+         "lat": 22.3129, "lon": 114.1719, "source": "Synthetic lunch and assumed product estimate", "raw": "1.1 demo kg CO₂e per meal; 18 g example packaging. No researched conversion factor."},
+        {"id": "market-01", "name": "Market groceries", "kind": "purchase", "category": "shopping", "date": "2026-11-17", "scope": "outside", "quantity": "1 bag of produce", "packaging_g": None, "co2e_kg": .72,
+         "lat": 22.3234, "lon": 114.1668, "source": "Synthetic market visit and assumed product estimate", "raw": "0.72 demo kg CO₂e per purchase. Packaging is unknown."},
+        {"id": "refill-01", "name": "Detergent refill", "kind": "purchase", "category": "shopping", "date": "2026-11-17", "scope": "outside", "quantity": "1 refill pouch", "packaging_g": 14, "co2e_kg": .35,
+         "lat": 22.3198, "lon": 114.1657, "source": "Synthetic refill purchase and assumed product estimate", "raw": "0.35 demo kg CO₂e per purchase; 14 g example packaging. No researched factor or measured packaging weight."},
+        {"id": "bakery-01", "name": "Bakery stop", "kind": "purchase", "category": "food", "date": "2026-11-16", "scope": "outside", "owner": "Personal", "quantity": "2 buns", "packaging_g": 8, "co2e_kg": .28,
+         "lat": 22.3157, "lon": 114.1671, "source": "Synthetic bakery purchase and assumed product estimate", "raw": "0.28 demo kg CO₂e per purchase; 8 g example packaging. Unverified scenario values."},
+        {"id": "bus-03", "name": "Bus · Prince Edward", "kind": "trip", "category": "transport", "date": "2026-11-18", "scope": "outside", "owner": "Personal", "mode": "bus", "km": 3.2,
+         "lat": 22.3269, "lon": 114.1674, "legs": ["Bus · 3.2 km"], "stations": "Illustrative stops", "source": "Synthetic bus journey; displayed location is an attribution point, not a tracked route"},
     ]
     result = [{**deepcopy(common), **deepcopy(row)} for row in rows]
     for row in result:
@@ -142,7 +154,7 @@ def activity_preview(body):
     ratio = (ref_total-total)/ref_total if ref_total else None
     mapped = [{key: row[key] for key in ("name", "category", "scope", "lat", "lon", "co2e_kg")}
               for row in population if row["co2e_kg"] is not None]
-    footprint = preview(mapped, "all", "all", body.get("bandwidth_m", 750), "activity_demo")
+    footprint = preview(mapped, "all", "all", body.get("bandwidth_m", 150), "activity_demo")
     footprint.update(scope=scope, category=category)
     footprint["provenance"].update(source="Fixed synthetic activity scenario; sourced MTR factor applied only to demo rail distance",
                                    limitations="Incomplete demo coverage; unknown emissions are excluded, not zero. Point attribution is not a route or air-pollution measurement.")
@@ -155,8 +167,9 @@ def activity_preview(body):
         items = [r for r in rows if first.isoformat() <= r["date"] <= last.isoformat() and in_scope(r) and (category == "all" or r["category"] == category)]
         trends.append({"label": f"{first.day}–{last.day} {last.strftime('%b')}", "total_kg": estimate(items)})
     return {"classification": "synthetic", "records": selected, "footprint": footprint,
+            "green_index": {"value": .35, "classification": "synthetic_manual", "definition": "Independent demo green index; scoring formula not defined. Not the period emission change."},
             "period": {"key": period, "start": start.isoformat(), "end": end.isoformat(), "reference_start": ref_start.isoformat(), "reference_end": ref_end.isoformat()},
-            "comparison": {"total_kg": total, "reference_kg": ref_total, "change_fraction": ratio, "index": max(-1, min(1, ratio)) if ratio is not None else None,
+            "comparison": {"total_kg": total, "reference_kg": ref_total, "change_fraction": ratio,
                            "largest_change": max(contributions, key=lambda r: abs(r["change_kg"]), default=None)},
             "coverage": {"pending_trips": sum(r["kind"] == "trip" and r["mode"] is None for r in population),
                          "pending_purchases": sum(r["status"] == "needs_items" for r in population),

@@ -499,7 +499,7 @@
     "/api/v1/living/activities/preview": {
       "post": {
         "summary": "Recalculate the demo from bounded corrections; no persistence",
-        "description": "Dates are fixed demo periods. Unknown emissions remain null and excluded. Corrections are explicit selections, not sensor calibration or real purchases. Browser callers need CSRF.",
+        "description": "Dates are fixed demo periods. Unknown emissions remain null and excluded. Corrections are explicit selections, not sensor calibration or real purchases. Browser callers need CSRF. Green index is an independent synthetic placeholder, not a percent change. Default smoothing is 150 m.",
         "requestBody": {
           "required": true,
           "content": {
@@ -535,6 +535,7 @@
                   },
                   "bandwidth_m": {
                     "enum": [
+                      150,
                       250,
                       500,
                       750,
@@ -558,7 +559,8 @@
                             "id": {
                               "enum": [
                                 "rail-01",
-                                "trip-02"
+                                "trip-02",
+                                "bus-03"
                               ]
                             },
                             "mode": {

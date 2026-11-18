@@ -77,8 +77,25 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(outside["coverage"]["missing_plug_days"], 0)
         empty = self.preview(scope="inside", category="transport").json
         self.assertIsNone(empty["footprint"]["grid"])
-        self.assertIsNone(empty["comparison"]["index"])
+        self.assertIsNone(empty["comparison"]["change_fraction"])
         self.assertEqual(empty["coverage"]["total_records"], 0)
+
+    def test_green_index_is_independent_and_compact_map_preserves_mass(self):
+        data = self.preview().json
+        self.assertEqual(data["green_index"]["value"], .35)
+        self.assertEqual(data["green_index"]["classification"], "synthetic_manual")
+        self.assertNotIn("index", data["comparison"])
+        changed = self.preview(corrections=[{"id": "trip-02", "mode": "car"}]).json
+        self.assertNotEqual(data["comparison"]["change_fraction"], changed["comparison"]["change_fraction"])
+        self.assertEqual(data["green_index"], changed["green_index"])
+        self.assertEqual(self.preview(scope="inside", category="transport").json["green_index"], data["green_index"])
+        self.assertEqual(data["footprint"]["bandwidth_m"], 150)
+        locations = {(r["lat"], r["lon"]) for r in data["footprint"]["activities"]}
+        self.assertEqual(len(locations), 10)
+        broad = self.preview(bandwidth_m=750).json["footprint"]
+        self.assertEqual(data["footprint"]["total_kg"], broad["total_kg"])
+        for field in (data["footprint"], broad):
+            self.assertAlmostEqual(field["grid"]["integrated_kg"], field["total_kg"], delta=.005)
 
     def test_bad_fields_bounds_or_reference_edits_are_rejected(self):
         cases = [{"period": "year"}, {"category": []}, {"scope": "someone"}, {"bandwidth_m": 0},

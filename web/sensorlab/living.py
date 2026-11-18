@@ -7,7 +7,7 @@ from .auth import require_roles
 
 living = Blueprint("living", __name__)
 CATEGORIES = ("energy", "water", "transport", "shopping", "food", "other")
-BANDWIDTHS = (250, 500, 750, 1250, 2000)
+BANDWIDTHS = (150, 250, 500, 750, 1250, 2000)
 EXAMPLE = [
     {"name": "Home energy", "category": "energy", "scope": "inside", "lat": 22.3364, "lon": 114.2655, "co2e_kg": 12},
     {"name": "Home water", "category": "water", "scope": "inside", "lat": 22.3364, "lon": 114.2655, "co2e_kg": 0.15},

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from http.client import RemoteDisconnected
 from pathlib import Path
 from unittest.mock import patch
 
@@ -179,6 +180,33 @@ class DeployTests(unittest.TestCase):
                                          "/home/researcher/sensorlab", "researcher.pythonanywhere.com", Path(temp) / "snapshot", check=lambda *_: {"ok": True})
         self.assertEqual(result["uploaded_files"], 0)
         self.assertEqual(client.writes, 0)
+
+    def test_lost_reload_response_requires_healthy_expected_release(self):
+        client = FakeAPI({"/home/researcher/sensorlab/app.py": b"old"})
+        files = {"app.py": b"new", "release.json": b'{"release":"new"}'}
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(client, "reload", side_effect=RemoteDisconnected("lost acknowledgement")), \
+                 patch.object(deploy, "health_check", return_value={"verified": True}) as health:
+                result = deploy.deploy_files(client, files, "new", "/home/researcher/sensorlab",
+                                             "researcher.pythonanywhere.com", Path(temp) / "snapshot")
+        health.assert_called_once_with("researcher.pythonanywhere.com", "new")
+        self.assertFalse(result["reload_acknowledged"])
+        self.assertEqual(result["health"], {"verified": True})
+        self.assertEqual(client.storage["/home/researcher/sensorlab/app.py"], b"new")
+
+    def test_lost_reload_response_with_wrong_release_still_rolls_back(self):
+        original = {"/home/researcher/sensorlab/app.py": b"old", "/home/researcher/sensorlab/release.json": b'{"release":"old","files":{}}'}
+        client = FakeAPI(original)
+        def wrong_release(*_):
+            raise RuntimeError("The running release is still old")
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(client, "reload", side_effect=[RemoteDisconnected("lost acknowledgement"), None]) as reload:
+                with self.assertRaisesRegex(RuntimeError, "previous source files restored"):
+                    deploy.deploy_files(client, {"app.py": b"new", "release.json": b'{"release":"new"}'}, "new",
+                                        "/home/researcher/sensorlab", "researcher.pythonanywhere.com",
+                                        Path(temp) / "snapshot", check=wrong_release)
+        self.assertEqual(reload.call_count, 2)
+        self.assertEqual(client.storage, original)
 
 
 if __name__ == "__main__":

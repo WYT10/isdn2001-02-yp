@@ -7,9 +7,9 @@
   const csrf = document.querySelector('meta[name="csrf-token"]').content;
   const state = {data: null, activityData: null, request: 0, layers: null, dark: false,
     view: "contour", surface: null, viewRequest: 0};
-  const map = L.map("footprint-map", {scrollWheelZoom: false, zoomControl: true, preferCanvas: false}).setView([22.323,114.258],13);
+  const map = L.map("footprint-map", {scrollWheelZoom: false, zoomControl: true, preferCanvas: false, zoomSnap:.5}).setView([22.317,114.17],15);
   const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 18, minZoom: 8, updateWhenIdle: true, keepBuffer: 1, crossOrigin: true,
+    maxZoom: 19, minZoom: 8, updateWhenIdle: true, keepBuffer: 1, crossOrigin: true, detectRetina: true,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
   }).addTo(map);
   L.control.scale({imperial:false, maxWidth:100}).addTo(map);
@@ -57,19 +57,21 @@
     }catch(error){failed=true;surfaceUnavailable();}
     finally{$("surface-view-button").disabled=failed;}
   }
-  function indexPreview(comparison) {
-    const value=comparison.index,angle=((value||0)+1)*Math.PI/2;
+  function indexPreview(index) {
+    const value=index.value,angle=((value||0)+1)*Math.PI/2;
     $("index-needle").setAttribute("x2",String(150-92*Math.cos(angle)));
     $("index-needle").setAttribute("y2",String(145-92*Math.sin(angle)));
     $("index-needle").style.visibility=value===null?"hidden":"visible";
     const text=value===null?"No reference":(value>0?"+":"")+value.toFixed(2);
     set("gauge-score",text);
-    $("green-index-gauge").setAttribute("aria-label","Demo comparison index "+text+". Minus one left, zero up, plus one right.");
+    set("green-index-value",text);
+    $("green-index-gauge").setAttribute("aria-label","Synthetic green index "+text+". Minus one left, zero up, plus one right.");
   }
   function boundsForActivities(rows) {return L.latLngBounds(rows.map(row => [row.lat,row.lon]));}
   function fit() {
     const rows = state.data && state.data.activities;
-    if (rows && rows.length) map.fitBounds(boundsForActivities(rows).pad(.24), {maxZoom:14, animate:false, padding:[25,35]});
+    if (rows && rows.length) map.fitBounds(boundsForActivities(rows).pad(.02), {maxZoom:16, animate:false, padding:[18,18]});
+    map.getContainer().dataset.zoom=String(map.getZoom());
     updateSurface();if(state.view==="3d"&&state.surface)state.surface.reset();
   }
   function chooseCategory(name) {$("category-filter").value = name; refresh();}
@@ -101,12 +103,12 @@
     if(state.layers) state.layers.remove();state.layers=L.layerGroup().addTo(map);
     const data=state.data, grid=data.grid;$("map-empty").hidden=Boolean(grid);
     set("density-max",grid?format(grid.max,1):"0");set("density-mid",grid?format(grid.max/2,1):"0");
-    if(!grid)return;
+    if(!grid){map.getContainer().dataset.locations="0";return;}
     const canvas=document.createElement("canvas");canvas.width=canvas.height=grid.size;
     const context=canvas.getContext("2d"), pixels=context.createImageData(grid.size,grid.size);
     grid.values.forEach((value,i)=>{const t=value/grid.max, rgb=ramp(t);pixels.data.set([...rgb,Math.round(165*Math.min(1,t/.15)*Math.min(1,t*8))],i*4);});
     context.putImageData(pixels,0,0);L.imageOverlay(canvas.toDataURL(),grid.bounds,{opacity:1,interactive:false}).addTo(state.layers);
-    const levels=[.03,.08,.16,.28,.42,.58,.76,.92].map(v=>v*grid.max);
+    const levels=[.07,.12,.2,.32,.46,.62,.78,.93].map(v=>v*grid.max);
     const contours=d3.contours().size([grid.size,grid.size]).thresholds(levels)(grid.values);
     const south=grid.bounds[0][0],west=grid.bounds[0][1],north=grid.bounds[1][0],east=grid.bounds[1][1];
     contours.forEach(contour=>{
@@ -114,14 +116,15 @@
       L.geoJSON(geometry,{interactive:false,style:{color:state.dark?"#f8f7dc":"#416d54",weight:.8,opacity:.22+contour.value/grid.max*.35,fill:false}}).addTo(state.layers);
     });
     const grouped=new Map();data.activities.forEach(row=>{const key=row.lat.toFixed(5)+","+row.lon.toFixed(5);if(!grouped.has(key))grouped.set(key,{lat:row.lat,lon:row.lon,total:0,rows:[]});const point=grouped.get(key);point.total+=row.co2e_kg;point.rows.push(row);});
-    [...grouped.values()].forEach(point=>{
+    const ranked=[...grouped.values()].sort((a,b)=>b.total-a.total);
+    map.getContainer().dataset.locations=String(ranked.length);
+    ranked.forEach((point,index)=>{
       const marker=L.circleMarker([point.lat,point.lon],{radius:5+Math.sqrt(point.total)*1.6,color:"#fff",weight:2,fillColor:"#315c46",fillOpacity:1}).addTo(state.layers);
       const details=document.createElement("div");point.rows.forEach(row=>{const line=document.createElement("div");line.textContent=row.name+" · "+format(row.co2e_kg)+" kg CO₂e";details.append(line);
         const record=window.SensorActivities.records().find(item=>item.name===row.name&&item.lat===row.lat&&item.lon===row.lon&&item.co2e_kg===row.co2e_kg);
         if(record){const open=document.createElement("button");open.type="button";open.className="text-button";open.textContent="Open activity record →";open.addEventListener("click",()=>window.SensorActivities.openRecord(record.id));details.append(open);}
       });marker.bindPopup(details);
-      const named=point.rows.find(row=>/home energy|road commute|cafe/i.test(row.name));
-      if(named || grouped.size<=3){const label=document.createElement("div");label.textContent=point.rows.length>1?(point.rows.every(row=>row.scope==="inside")?"Home activities":"Activities here"):point.rows[0].name;const amount=document.createElement("span");amount.textContent=format(point.total)+" kg CO₂e";label.append(amount);marker.bindTooltip(label,{permanent:true,direction:"top",offset:[0,-8],className:"peak-label"});}
+      const label=document.createElement("div");label.textContent=point.rows.length>1?(point.rows.every(row=>row.scope==="inside")?"Home activities":"Activities here"):point.rows[0].name;const amount=document.createElement("span");amount.textContent=format(point.total)+" kg CO₂e";label.append(amount);marker.bindTooltip(label,{permanent:index<2,direction:index===0?"right":index===1?"left":"top",offset:index<2?[index===0?8:-8,0]:[0,-8],className:"peak-label"});
     });
   }
   function render(data,fitMap) {
@@ -150,7 +153,7 @@
     const filters={scope:$("scope-filter").value,category:$("category-filter").value,bandwidth_m:Number($("smoothing").value)};
     try {
       const result=await window.SensorActivities.refresh(filters);if(!result||requestId!==state.request)return;
-      state.activityData=result;indexPreview(result.comparison);const data=result.footprint;
+      state.activityData=result;indexPreview(result.green_index);const data=result.footprint;
       render(data,fitMap);$("living-error").hidden=true;
     } catch(error){if(requestId!==state.request)return;set("living-error",error.message);$("living-error").hidden=false;set("living-status","Preview unavailable");}
   }

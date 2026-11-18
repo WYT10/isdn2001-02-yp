@@ -15,6 +15,8 @@
   function showTab(name,focus=false){
     if(!["home","shopping","transport","sensors","overall"].includes(name))name="overall";
     document.querySelector(".living-app").dataset.activeTab=name;
+    const shared=$("shared-filters"),slot=$("shared-filters-slot"),filterFields=$("overview-filter-fields");
+    if(shared&&slot&&filterFields){if(name==="overall")filterFields.prepend(shared);else slot.append(shared);}
     document.querySelectorAll(".activity-tab").forEach(node=>node.hidden=node.id!=="tab-"+name);
     document.querySelectorAll(".activity-nav a").forEach(node=>{if(node.dataset.tab===name)node.setAttribute("aria-current","page");else node.removeAttribute("aria-current");});
     document.dispatchEvent(new CustomEvent("sensorlab:tab",{detail:{tab:name}}));
@@ -26,6 +28,10 @@
   $("period-filter").addEventListener("change",refresh);
   $("reset-activities").addEventListener("click",()=>{corrections=[];save();refresh();});
   $("reset-overall").addEventListener("click",()=>$("reset-activities").click());
+  $("reset-filters").addEventListener("click",()=>{$("period-filter").value="week";$("scope-filter").value="all";$("category-filter").value="all";$("smoothing").value="150";refresh();});
+  $("close-filters").addEventListener("click",()=>{document.querySelector(".overview-filter").open=false;$("filter-summary").focus();});
+  document.addEventListener("click",event=>{if(!event.target.closest(".overview-filter"))document.querySelector(".overview-filter").open=false;});
+  document.addEventListener("keydown",event=>{if(event.key==="Escape"&&document.querySelector(".overview-filter").open){document.querySelector(".overview-filter").open=false;$("filter-summary").focus();}});
   function needsMode(row){return row.kind==="trip"&&row.mode===null;}
   function inputButtons(row){const host=el("div",{class:"choice-buttons"});
     ["mtr","bus","car","skip"].forEach(mode=>host.append(button(mode==="mtr"?"MTR":mode.charAt(0).toUpperCase()+mode.slice(1),()=>correct({id:row.id,mode}),row.mode===mode?"button primary":"button outline")));
@@ -125,7 +131,9 @@
     const shortDate=value=>new Date(value+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
     text("reference-label","vs "+shortDate(data.period.reference_start)+"–"+shortDate(data.period.reference_end));
     text("overview-coverage",c.known_records+" of "+c.total_records+" activities estimated");
-    text("comparison-method","Known estimates: "+fmt(data.comparison.total_kg,4)+" kg CO₂e. Named reference: "+fmt(data.comparison.reference_kg,4)+" kg CO₂e. Relative change = (reference − selected) / reference; identical date length, scope and category. No score when the reference has no known emissions.");
+    const filterCount=Number($("period-filter").value!=="week")+Number($("scope-filter").value!=="all")+Number($("category-filter").value!=="all")+Number($("smoothing").value!=="150");
+    text("filter-summary",filterCount?"Filter · "+filterCount:"Filter");
+    text("comparison-method","Known estimates: "+fmt(data.comparison.total_kg,4)+" kg CO₂e. Named reference: "+fmt(data.comparison.reference_kg,4)+" kg CO₂e. Relative change = (reference − selected) / reference; identical date length, scope and category. No change percentage when the reference has no known emissions.");
     const max=Math.max(1,...data.trends.map(r=>r.total_kg));$("weekly-trend").replaceChildren(...data.trends.map(row=>{const bar=el("span",{class:"trend-bar"});bar.style.width=(row.total_kg/max*100)+"%";return el("div",{class:"trend-row"},el("span",{},row.label),el("div",{class:"trend-track"},bar),el("strong",{},fmt(row.total_kg)+" kg"));}));
     text("session-save-state",storageAvailable?"Corrections stay in this browser tab session.":"Browser storage unavailable; corrections last until this page closes.");
     text("activity-status","Demo activities updated. "+c.pending_trips+" unresolved trips.");

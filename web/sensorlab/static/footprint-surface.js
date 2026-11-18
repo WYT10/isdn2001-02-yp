@@ -101,7 +101,7 @@ export function createFootprintSurface(host, labelHost, onUnavailable) {
     const textureCanvas=document.createElement("canvas");textureCanvas.width=1024;textureCanvas.height=Math.round(1024*depth/width);
     const context=textureCanvas.getContext("2d"),rect=map.getContainer().getBoundingClientRect();
     context.fillStyle=dark?"#34453a":"#e4e9df";context.fillRect(0,0,textureCanvas.width,textureCanvas.height);
-    context.filter=dark?"grayscale(1) brightness(.55)":"grayscale(1)";context.globalAlpha=dark?.9:.75;
+    context.filter=dark?"grayscale(1) brightness(.65)":"saturate(.3)";context.globalAlpha=.95;
     let streetTiles=0;
     try{
       map.getPane("tilePane").querySelectorAll("img.leaflet-tile-loaded").forEach(image=>{
@@ -120,12 +120,12 @@ export function createFootprintSurface(host, labelHost, onUnavailable) {
     label((grid?grid.max:0).toLocaleString(undefined,{maximumFractionDigits:1})+" kg CO₂e/km²",new THREE.Vector3(-54,33,depth/2),"axis");
     label("N",new THREE.Vector3(0,0,-depth/2-4),"axis");
     const grouped=new Map();data.activities.forEach(row=>{const key=row.lat.toFixed(5)+","+row.lon.toFixed(5);if(!grouped.has(key))grouped.set(key,{lat:row.lat,lon:row.lon,rows:[],total:0});const p=grouped.get(key);p.rows.push(row);p.total+=row.co2e_kg;});
-    [...grouped.values()].forEach(point=>{
+    [...grouped.values()].sort((a,b)=>b.total-a.total).forEach((point,index)=>{
       const pixel=map.latLngToContainerPoint([point.lat,point.lon]);
       if(pixel.x<0||pixel.x>map.getSize().x||pixel.y<0||pixel.y>map.getSize().y)return;
       const x=(pixel.x/map.getSize().x-.5)*width,z=(pixel.y/map.getSize().y-.5)*depth,y=grid?sampleDensity(grid,point.lat,point.lon)/grid.max*30:0;
       const pin=new THREE.Mesh(new THREE.SphereGeometry(.75,10,8),new THREE.MeshBasicMaterial({color:0x254d3b}));pin.position.set(x,y+1,z);group.add(pin);
-      if(grouped.size<=3||point.rows.some(row=>/home energy|road commute|cafe/i.test(row.name))){
+      if(index<2){
         const name=point.rows.length>1?(point.rows.every(row=>row.scope==="inside")?"Home activities":"Activities here"):point.rows[0].name;
         label(name+" · "+point.total.toLocaleString(undefined,{maximumFractionDigits:2})+" kg CO₂e",new THREE.Vector3(x,y+5,z));
       }

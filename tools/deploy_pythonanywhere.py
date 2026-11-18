@@ -175,11 +175,17 @@ def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=w
             target.write_bytes(content)
     (backup_dir / "snapshot.json").write_text(json.dumps({"missing": [name for name, body in before.items() if body is None]}, indent=2))
     attempted = []
+    reload_acknowledged = True
     try:
         for name in changed:
             attempted.append(name)
             client.put_file(remote_dir + "/" + name, files[name])
-        client.reload(domain)
+        try:
+            client.reload(domain)
+        except OSError:
+            # A lost response does not establish whether the server reloaded.
+            # Accept only the expected running release and database readiness.
+            reload_acknowledged = False
         result = check(domain, release)
     except Exception as error:
         rollback_errors = []
@@ -198,7 +204,7 @@ def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=w
         if rollback_errors:
             raise RuntimeError("Update failed and rollback needs attention; see private snapshot " + str(backup_dir)) from error
         raise RuntimeError("Update failed; previous source files restored and reload requested. Snapshot: " + str(backup_dir)) from error
-    return {"release": release, "uploaded_files": len(changed), "health": result}
+    return {"release": release, "uploaded_files": len(changed), "reload_acknowledged": reload_acknowledged, "health": result}
 
 
 def main():
