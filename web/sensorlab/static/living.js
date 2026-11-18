@@ -5,16 +5,55 @@
   const title = value => value.charAt(0).toUpperCase() + value.slice(1);
   const colors = {energy: "#2d6b55", transport: "#65917e", shopping: "#a58c57", food: "#87964d", water: "#568a9b", other: "#82718f"};
   const csrf = document.querySelector('meta[name="csrf-token"]').content;
-  const state = {data: null, custom: null, original: null, request: 0, layers: null, dark: false};
+  const state = {data: null, custom: null, original: null, request: 0, layers: null, dark: false,
+    view: "contour", surface: null, viewRequest: 0};
   const map = L.map("footprint-map", {scrollWheelZoom: false, zoomControl: true, preferCanvas: false}).setView([22.323,114.258],13);
   const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 18, minZoom: 8, updateWhenIdle: true, keepBuffer: 1,
+    maxZoom: 18, minZoom: 8, updateWhenIdle: true, keepBuffer: 1, crossOrigin: true,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
   }).addTo(map);
   L.control.scale({imperial:false, maxWidth:100}).addTo(map);
   tiles.on("tileerror", () => {$("tile-status").hidden = false;});
-  tiles.on("tileload", () => {$("tile-status").hidden = true;});
+  let surfaceRefresh = null;
+  tiles.on("tileload", () => {
+    $("tile-status").hidden = true;
+    if(state.view==="3d"&&state.surface){clearTimeout(surfaceRefresh);surfaceRefresh=setTimeout(updateSurface,150);}
+  });
   function set(id, value) { $(id).textContent = value; }
+  function surfaceUnavailable() {
+    setMapView("contour");$("surface-view-button").disabled=true;
+    $("surface-status").hidden=false;
+    set("surface-status","3D is unavailable on this device. The contour map remains available.");
+  }
+  function updateSurface() {
+    if(state.view!=="3d"||!state.surface||!state.data)return;
+    const result=state.surface.update(state.data,map,state.dark);
+    $("surface-status").hidden=false;
+    set("surface-status","Height = smoothed density (kg CO₂e/km²), exaggerated for clarity."+
+      (result.streetTiles?"":" Street texture unavailable; activity locations and heights are still shown."));
+  }
+  async function setMapView(view) {
+    const requestId=++state.viewRequest;state.view=view;
+    $("footprint-map-wrap").dataset.view=view;
+    $("footprint-surface").hidden=view!=="3d";$("surface-controls").hidden=view!=="3d";
+    $("surface-status").hidden=true;
+    $("contour-view-button").classList.toggle("selected",view==="contour");
+    $("surface-view-button").classList.toggle("selected",view==="3d");
+    $("contour-view-button").setAttribute("aria-pressed",String(view==="contour"));
+    $("surface-view-button").setAttribute("aria-pressed",String(view==="3d"));
+    map.getContainer().setAttribute("aria-hidden",String(view==="3d"));
+    if(view==="contour"){if(state.surface)state.surface.setVisible(false);map.invalidateSize({animate:false});return;}
+    $("surface-status").hidden=false;set("surface-status","Loading 3D landscape…");
+    $("surface-view-button").disabled=true;
+    let failed=false;
+    try{
+      if(!state.surface){const module=await import("./footprint-surface.js");if(requestId!==state.viewRequest)return;
+        state.surface=module.createFootprintSurface($("surface-canvas"),$("surface-labels"),surfaceUnavailable);}
+      if(requestId!==state.viewRequest)return;
+      state.surface.setVisible(true);updateSurface();state.surface.reset();
+    }catch(error){failed=true;surfaceUnavailable();}
+    finally{$("surface-view-button").disabled=failed;}
+  }
   function indexPreview() {
     const value=Number($("index-preview").value),angle=(value+1)*Math.PI/2;
     $("index-needle").setAttribute("x2",String(150-92*Math.cos(angle)));
@@ -27,6 +66,7 @@
   function fit() {
     const rows = state.data && state.data.activities;
     if (rows && rows.length) map.fitBounds(boundsForActivities(rows).pad(.24), {maxZoom:14, animate:false, padding:[25,35]});
+    updateSurface();if(state.view==="3d"&&state.surface)state.surface.reset();
   }
   function chooseCategory(name) {$("category-filter").value = name; refresh();}
   function treemap() {
@@ -92,7 +132,7 @@
     set("reflection-title",reflection);const suggestion=leader&&leader.name==="transport"?"Which journey could you review for a lower-emission travel option?":leader&&leader.name==="energy"?"Which home energy use could you understand better before changing it?":leader&&leader.name==="shopping"?"Which purchase could you reconsider, repair or use for longer?":"Which activity would you like to understand or change next?";
     set("reflection-copy",suggestion+" These are reflection questions, not measured savings.");set("prompt-title",reflection);set("prompt-body",suggestion);
     set("source-detail",data.provenance.source+". "+data.provenance.storage+".");set("method-detail",data.provenance.method+". Grid integral: "+format(data.grid?data.grid.integrated_kg:0,3)+" kg CO₂e; selected input total: "+format(data.total_kg,3)+" kg CO₂e.");set("limit-detail",data.provenance.limitations);
-    treemap();landscape();if(fitMap)fit();set("living-status",data.classification==="example"?"Synthetic preview · ready":"Custom preview · not saved");
+    treemap();landscape();if(fitMap)fit();else updateSurface();set("living-status",data.classification==="example"?"Synthetic preview · ready":"Custom preview · not saved");
   }
   async function refresh(fitMap=true) {
     const requestId=++state.request;set("living-status","Updating preview…");
@@ -106,12 +146,19 @@
   }
   $("scope-filter").addEventListener("change",()=>refresh());$("category-filter").addEventListener("change",()=>refresh());$("smoothing").addEventListener("change",()=>refresh(false));
   $("clear-category").addEventListener("click",()=>chooseCategory("all"));$("fit-map").addEventListener("click",fit);
-  $("theme-button").addEventListener("click",()=>{state.dark=!state.dark;document.querySelector(".living-app").classList.toggle("dark",state.dark);$("theme-button").setAttribute("aria-pressed",String(state.dark));set("theme-button",state.dark?"Light map":"Dark map");if(state.data)landscape();});
+  $("theme-button").addEventListener("click",()=>{state.dark=!state.dark;document.querySelector(".living-app").classList.toggle("dark",state.dark);$("theme-button").setAttribute("aria-pressed",String(state.dark));set("theme-button",state.dark?"Light map":"Dark map");if(state.data){landscape();updateSurface();}});
   $("edit-data").addEventListener("click",()=>{const editor=$("data-editor");editor.hidden=!editor.hidden;$("edit-data").setAttribute("aria-expanded",String(!editor.hidden));if(!editor.hidden){$("activity-json").value=JSON.stringify(state.custom||state.original||[],null,2);$("activity-json").focus();}});
   $("apply-data").addEventListener("click",()=>{try{const rows=JSON.parse($("activity-json").value);if(!Array.isArray(rows))throw new Error("Use a JSON array of activities.");state.custom=rows;set("editor-status","Applying preview…");refresh().then(()=>set("editor-status",$("living-error").hidden?"Preview applied; not saved.":"Fix the inputs and apply again."));}catch(error){set("editor-status",error.message);}});
   $("reset-example").addEventListener("click",()=>{state.custom=null;$("scope-filter").value="all";$("category-filter").value="all";$("activity-json").value=JSON.stringify(state.original||[],null,2);set("editor-status","Example restored.");refresh();});
   $("export-living").addEventListener("click",()=>{if(!state.data)return;const blob=new Blob([JSON.stringify({...state.data,index_preview:{value:Number($("index-preview").value),classification:"synthetic_manual",definition:"Scoring model not defined; independent of activity data"}},null,2)],{type:"application/json"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="sensorlab-footprint-preview.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
   $("reflection-button").addEventListener("click",()=>$("reflection-dialog").showModal());["close-reflection","dismiss-reflection"].forEach(id=>$(id).addEventListener("click",()=>$("reflection-dialog").close()));
-  new ResizeObserver(()=>{if(state.data)treemap();map.invalidateSize({animate:false});}).observe($("footprint-map"));
+  $("contour-view-button").addEventListener("click",()=>setMapView("contour"));
+  $("surface-view-button").addEventListener("click",()=>setMapView("3d"));
+  $("reset-surface").addEventListener("click",()=>{if(state.surface)state.surface.reset();});
+  $("rotate-surface-left").addEventListener("click",()=>{if(state.surface)state.surface.rotate(-Math.PI/8);});
+  $("rotate-surface-right").addEventListener("click",()=>{if(state.surface)state.surface.rotate(Math.PI/8);});
+  $("zoom-surface-in").addEventListener("click",()=>{if(state.surface)state.surface.zoom(.85);});
+  $("zoom-surface-out").addEventListener("click",()=>{if(state.surface)state.surface.zoom(1.18);});
+  new ResizeObserver(()=>{if(state.data)treemap();map.invalidateSize({animate:false});updateSurface();}).observe($("footprint-map"));
   $("index-preview").addEventListener("input",indexPreview);indexPreview();refresh();
 }());
