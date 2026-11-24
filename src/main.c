@@ -36,6 +36,9 @@ static const app_config_t app = {
 #if CONFIG_IDF_TARGET_ESP32
     .board_name = "ESP32-WROOM",
     .sensor_pin = "D15 / GPIO15",
+#elif defined(FLOW_BOARD_S3_DEVKIT)
+    .board_name = "ESP32-S3 DevKit",
+    .sensor_pin = "GPIO9",
 #else
     .board_name = "XIAO ESP32-S3",
     .sensor_pin = "D10 / GPIO9",
@@ -44,7 +47,7 @@ static const app_config_t app = {
 #if CONFIG_IDF_TARGET_ESP32
         .gpio = 15, /* WROOM D15: sensor input only. */
 #else
-        .gpio = 9, /* XIAO D10: sensor input only. */
+        .gpio = 9, /* S3 GPIO9 / XIAO D10: sensor input only. */
 #endif
         .pull_up = true,
         .capture_timing = true,

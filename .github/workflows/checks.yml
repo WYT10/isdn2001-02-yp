@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [seeed_xiao_esp32s3, esp32_wroom]
+        environment: [seeed_xiao_esp32s3, esp32_wroom, esp32s3_devkit]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
