@@ -255,7 +255,7 @@ Before adding local HTTP, the three-file refactor passed native calculation/timi
 
 ## Board targets
 
-The checkout remains on `test/esp32-wroom`, but the active default was switched back to **XIAO ESP32-S3** (`seeed_xiao_esp32s3`) on 24 Nov 2026. WROOM and the generic S3 dev-kit are optional explicit environments. The restored XIAO default passed a fresh local build and image validation; the firmware changes also passed [all four CI jobs](https://github.com/WYT10/isdn2001-02-yp/actions/runs/45355561685). Flashing and hardware tests remain deferred while the hardware is repaired. All targets use the same four application C files and portable sensor/command logic. Board-specific defaults remain in the typed `app` initializer in `main.c`; target SDK settings are in `sdkconfig.defaults.esp32` and `sdkconfig.defaults.esp32s3`.
+The checkout remains on `test/esp32-wroom`, but the active default was switched back to **XIAO ESP32-S3** (`seeed_xiao_esp32s3`) on 24 Nov 2026. WROOM and the generic S3 dev-kit are optional explicit environments. The restored XIAO default passed a fresh local build and image validation; the firmware changes also passed [all four CI jobs](https://github.com/WYT10/isdn2001-02-yp/actions/runs/45355561685). The connected XIAO on COM23 (MAC ending `fb:54:08`, 8 MB flash) was then backed up and flashed: all three written regions and preserved NVS passed device digest verification. Boot, serial commands, forty idle 250 ms reports and all three DSP numerical benchmarks passed. Its private eduroam profile connected and cloud uploads returned HTTP 201, including after reboot. Sensor input is D10/GPIO9; zero pulses were observed, and physical flow/calibration were not tested in this run. All targets use the same four application C files and portable sensor/command logic. Board-specific defaults remain in the typed `app` initializer in `main.c`; target SDK settings are in `sdkconfig.defaults.esp32` and `sdkconfig.defaults.esp32s3`.
 
 | Target | Sensor input | Serial interface | Local AP | Flash setting |
 |---|---|---|---|---|
@@ -295,7 +295,7 @@ For HKUST, use PEAP/MSCHAPv2 with server domain `wireless.ust.hk` and the system
 
 ## USB serial commands
 
-Commands run at 115200 baud through native USB Serial/JTAG on XIAO or the USB-to-UART bridge on WROOM. Close other serial monitors before using the helper. Install pyserial with the development requirements, then run from this project:
+Commands run at 115200 baud through native USB Serial/JTAG on XIAO or the USB-to-UART bridge on WROOM. Close other serial monitors before using the helper. It waits for USB startup, clears unfinished input with Ctrl+C, then sends the command. A matching network completion is sufficient when its queued acknowledgement is missing. Some native USB acknowledgement lines may still be missed: inspect status or boot evidence before retrying a mutation. Install pyserial with the development requirements, then run from this project (replace COM19 with the currently detected port, COM23 in the latest XIAO check):
 
 ```bash
 python tools/serial_cli.py --port COM19 help
