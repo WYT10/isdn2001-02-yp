@@ -17,7 +17,8 @@ def main():
         for name in names:
             path = Path(folder) / name
             if name.startswith("sdkconfig.") and name not in {
-                "sdkconfig.defaults", "sdkconfig.defaults.esp32", "sdkconfig.defaults.esp32s3"
+                "sdkconfig.defaults", "sdkconfig.defaults.esp32", "sdkconfig.defaults.esp32s3",
+                "sdkconfig.defaults.esp32s3_devkit"
             }:
                 continue
             files.append(path)

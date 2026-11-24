@@ -32,6 +32,7 @@ sdkconfig.*
 !sdkconfig.defaults
 !sdkconfig.defaults.esp32
 !sdkconfig.defaults.esp32s3
+!sdkconfig.defaults.esp32s3_devkit
 **/*.md
 !/agent.md
 !/readme.md
