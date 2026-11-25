@@ -1,14 +1,10 @@
 "use strict";
 (function () {
   const $=id=>document.getElementById(id), fmt=(n,d=2)=>Number(n).toLocaleString(undefined,{maximumFractionDigits:d});
-  const storageKey="sensorlab-demo-corrections-v1";
-  let data=null,corrections=[],requestId=0,storageAvailable=true;
-  try {corrections=JSON.parse(sessionStorage.getItem(storageKey)||"[]");if(!Array.isArray(corrections))corrections=[];}catch(error){storageAvailable=false;}
+  let data=null,requestId=0;
   function el(tag,attrs={},...children){const node=document.createElement(tag);Object.entries(attrs).forEach(([key,value])=>{if(key==="class")node.className=value;else node.setAttribute(key,value);});children.flat().forEach(child=>{if(child!==null&&child!==undefined)node.append(child instanceof Node?child:document.createTextNode(String(child)));});return node;}
   function text(id,value){$(id).textContent=value;}
-  function save(){try{sessionStorage.setItem(storageKey,JSON.stringify(corrections));}catch(error){storageAvailable=false;}}
   function refresh(){document.dispatchEvent(new CustomEvent("sensorlab:refresh"));}
-  function correct(change){corrections=corrections.filter(row=>row.id!==change.id).concat(change);save();refresh();}
   function button(label,action,style="button outline"){const node=el("button",{type:"button",class:style},label);node.addEventListener("click",action);return node;}
   function link(label,tab,id){const node=el("a",{href:"#"+tab,class:"text-button"},label);if(id)node.addEventListener("click",()=>openRecord(id));return node;}
   function tabFor(row){return row.kind==="trip"?"transport":row.kind==="purchase"?"shopping":row.kind==="other"?"overall":"sensors";}
@@ -27,33 +23,16 @@
   document.querySelectorAll('a[href="#data-notes"],a[href="#overall-inputs"]').forEach(link=>link.addEventListener("click",()=>{const target=$(link.hash.slice(1));target.open=true;}));
   document.addEventListener("sensorlab:open-record",event=>openRecord(event.detail.id));
   $("period-filter").addEventListener("change",refresh);
-  $("reset-activities").addEventListener("click",()=>{corrections=[];save();refresh();});
+  $("reset-activities").addEventListener("click",()=>location.assign("/workspace"));
   $("reset-overall").addEventListener("click",()=>$("reset-activities").click());
   $("reset-filters").addEventListener("click",()=>{$("period-filter").value="week";$("scope-filter").value="all";$("category-filter").value="all";$("smoothing").value="150";refresh();});
   $("close-filters").addEventListener("click",()=>{document.querySelector(".overview-filter").open=false;$("filter-summary").focus();});
   document.addEventListener("click",event=>{if(!event.target.closest(".overview-filter"))document.querySelector(".overview-filter").open=false;});
   document.addEventListener("keydown",event=>{if(event.key==="Escape"&&document.querySelector(".overview-filter").open){document.querySelector(".overview-filter").open=false;$("filter-summary").focus();}});
   function needsMode(row){return row.kind==="trip"&&row.mode===null;}
-  function inputButtons(row){const host=el("div",{class:"choice-buttons"});
-    ["mtr","bus","car","skip"].forEach(mode=>host.append(button(mode==="mtr"?"MTR":mode.charAt(0).toUpperCase()+mode.slice(1),()=>correct({id:row.id,mode}),row.mode===mode?"button primary":"button outline")));
-    return host;
-  }
-  function catalogueForm(row){
-    const select=el("select",{id:"catalogue-"+row.id},el("option",{value:""},"Choose a demo item"));
-    Object.entries(data.catalogue).forEach(([key,item])=>select.append(el("option",{value:key},item.name)));
-    const form=el("form",{class:"inline-form"},el("label",{for:select.id},"Confirm the item bought"),select,el("button",{type:"submit",class:"button primary"},"Confirm item"));
-    form.addEventListener("submit",event=>{event.preventDefault();if(!select.value){select.focus();return;}correct({id:row.id,catalogue:select.value});});return form;
-  }
-  function showerForm(row){
-    const litres=el("input",{id:"litres-"+row.id,type:"number",min:"0.1",max:"1000",step:"0.1",value:row.litres,required:""});
-    const minutes=el("input",{id:"minutes-"+row.id,type:"number",min:"0.1",max:"120",step:"0.1",value:row.minutes,required:""});
-    const form=el("form",{class:"session-form"},el("label",{for:litres.id},"Litres",litres),el("label",{for:minutes.id},"Minutes",minutes),el("button",{type:"submit",class:"button outline"},"Update demo session"));
-    form.addEventListener("submit",event=>{event.preventDefault();correct({id:row.id,litres:Number(litres.value),minutes:Number(minutes.value)});});
-    return el("details",{class:"correction-details"},el("summary",{},"Correct this demo session"),form);
-  }
   function what(row){
     if(row.kind==="other")return row.quantity+" · estimated "+fmt(row.co2e_kg)+" kg CO₂e.";
-    if(row.kind==="water")return "Last shower used "+fmt(row.litres)+" L over "+fmt(row.minutes)+" min.";
+    if(row.kind==="water")return row.name+" used "+fmt(row.litres)+" L over "+fmt(row.minutes)+" min.";
     if(row.kind==="electricity")return (row.id.startsWith("hotpot")?"Last hot pot session used ":"Other recorded home uses consumed ")+fmt(row.kwh)+" kWh.";
     if(row.kind==="trip")return row.mode?row.quantity+" · estimated "+fmt(row.co2e_kg)+" kg CO₂e for the vehicle leg.":"Vehicle trip detected · confirm mode. No carbon estimate yet.";
     if(row.status==="needs_items")return "HK$"+fmt(row.spend_hkd)+" recorded · item details needed.";
@@ -77,16 +56,14 @@
     return row.status==="needs_items"?"Add a receipt line or confirm an item from the demo catalogue.":row.refill_g!==undefined?"Compare equal-size bottle and refill options next time.":"Keep the item details so a suitable comparison can be added later.";
   }
   function record(row){
-    const historical=row.id.includes("-w"), status=row.status==="needs_items"?"Item details needed":needsMode(row)?row.status==="unresolved_skipped"?"Unresolved · skipped":"Confirm mode":row.status==="corrected_demo"?"Corrected demo":row.kind==="purchase"&&row.co2e_kg!==null?"Unverified estimate":"Demo record";
+    const historical=row.id.includes("-w"), status=row.status==="needs_items"?"Item details needed":needsMode(row)?row.status==="unresolved_skipped"?"Unresolved · skipped":"Confirm mode":row.status==="corrected_demo"?"Corrected demo":row.kind==="purchase"&&row.co2e_kg!==null?"Unverified estimate":row.classification==="synthetic"?"Demo record":"Saved record";
     const card=el("article",{class:"activity-record",id:"record-"+row.id,tabindex:"-1","data-record-id":row.id},
       el("header",{},el("div",{},el("p",{class:"eyebrow"},row.owner+" · "+row.date),el("h3",{},row.name)),el("span",{class:"status-chip"+(row.status.startsWith("needs")?" pending":"")},status)),
       el("div",{class:"record-fact"},el("span",{class:"step-label"},"What happened"),el("p",{class:"plain-fact"},what(row))),
       el("div",{class:"record-compare"},el("span",{class:"step-label"},"How it compares"),el("p",{},comparison(row))),
       el("div",{class:"record-action"},el("span",{class:"step-label"},"What I can do"),el("p",{},action(row))));
     const actionHost=card.querySelector(".record-action");
-    if(!historical&&row.kind==="trip")actionHost.append(inputButtons(row));
-    if(!historical&&row.id==="purchase-02")actionHost.append(catalogueForm(row));
-    if(!historical&&row.id==="shower-01")actionHost.append(showerForm(row));
+    const review=el("a",{href:"/workspace?event="+encodeURIComponent(row.id)+"&date="+row.date,class:"text-button"},"Review saved record →");actionHost.append(review);
     const details=el("details",{class:"estimate-details"},el("summary",{},"How we estimated this"),el("p",{},"Record "+row.id+" · "+row.status+" · Synthetic example."),el("p",{},row.source));
     if(row.baseline)details.append(el("p",{},"Reference: "+row.baseline.name+"; typical "+row.baseline.value+" "+row.baseline.unit+". All sessions are synthetic. No Bayesian threshold model is running."));
     if(row.kind==="trip"){
@@ -124,8 +101,8 @@
   function render(){
     renderInputs();
     const category=data.footprint.category,water=data.records.filter(r=>r.kind==="water"),power=data.records.filter(r=>r.kind==="electricity"),resourceCards=[];
-    if(category==="all"||category==="water")resourceCards.push(summary("Water sessions recorded",fmt(water.reduce((sum,r)=>sum+r.litres,0))+" L",water.length+" demo sessions. Water carbon remains unknown."));
-    if(category==="all"||category==="energy")resourceCards.push(summary("Electricity recorded",fmt(power.reduce((sum,r)=>sum+r.kwh,0))+" kWh",power.length+" demo uses. Separate uses exclude the hot pot."));
+    if(category==="all"||category==="water")resourceCards.push(summary("Water sessions recorded",fmt(water.reduce((sum,r)=>sum+r.litres,0))+" L",water.length+" stored sessions; see factor notes."));
+    if(category==="all"||category==="energy")resourceCards.push(summary("Electricity recorded",fmt(power.reduce((sum,r)=>sum+r.kwh,0))+" kWh",power.length+" allocated uses; daily subtotals exclude separately listed cooking."));
     $("resource-summary").hidden=!resourceCards.length;$("resource-summary").replaceChildren(...resourceCards);
     if(water.length&&(category==="all"||category==="water"))$("resource-summary").firstChild.append(link("See water sessions →","sensors",water[0].id));
     const purchases=data.records.filter(r=>r.kind==="purchase"),knownPacks=purchases.filter(r=>r.packaging_g!==null&&r.packaging_g!==undefined),estimated=purchases.filter(r=>r.co2e_kg!==null);
@@ -133,7 +110,7 @@
     shoppingGroups(purchases);
     replaceRecords("other-records",data.records.filter(r=>r.kind==="other"));
     $("other-activities").hidden=!data.records.some(r=>r.kind==="other");
-    const trips=data.records.filter(r=>r.kind==="trip").sort((a,b)=>b.date.localeCompare(a.date));replaceRecords("recent-trip",trips.slice(0,1));replaceRecords("transport-records",trips.slice(1));document.querySelector(".commute-panel").hidden=!trips.length;
+    const trips=data.records.filter(r=>r.kind==="trip").sort((a,b)=>b.date.localeCompare(a.date));replaceRecords("recent-trip",trips.slice(0,1));replaceRecords("transport-records",trips.slice(1));
     replaceRecords("water-records",data.records.filter(r=>r.kind==="water"));replaceRecords("electricity-records",data.records.filter(r=>r.kind==="electricity"));
     const c=data.coverage; text("coverage-copy",c.known_records+" of "+c.total_records+" selected records have a carbon estimate. Coverage is incomplete in both periods.");
     $("coverage-list").replaceChildren(...[c.pending_trips+" trips need confirmation (including skipped trips)",c.pending_purchases+" purchases need item details",c.missing_plug_days+" days of example plug data missing",c.unknown_emissions+" selected records and "+c.reference_unknown_emissions+" reference records have unknown emissions"].map(value=>el("li",{},value)));
@@ -146,16 +123,16 @@
     text("filter-summary",filterCount?"Filter · "+filterCount:"Filter");
     text("comparison-method","Known estimates: "+fmt(data.comparison.total_kg,4)+" kg CO₂e. Named reference: "+fmt(data.comparison.reference_kg,4)+" kg CO₂e. Relative change = (reference − selected) / reference; identical date length, scope and category. No change percentage when the reference has no known emissions.");
     const max=Math.max(1,...data.trends.map(r=>r.total_kg));$("weekly-trend").replaceChildren(...data.trends.map(row=>{const bar=el("span",{class:"trend-bar"});bar.style.width=(row.total_kg/max*100)+"%";return el("div",{class:"trend-row"},el("span",{},row.label),el("div",{class:"trend-track"},bar),el("strong",{},fmt(row.total_kg)+" kg"));}));
-    text("session-save-state",storageAvailable?"Corrections stay in this browser tab session.":"Browser storage unavailable; corrections last until this page closes.");
+    text("session-save-state","Stored in the database · review records in the workspace.");
     text("activity-status","Demo activities updated. "+c.pending_trips+" unresolved trips.");
   }
   window.SensorActivities={
     async refresh(filters){const id=++requestId;
-      const response=await fetch("/api/v1/living/activities/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-CSRF-Token":document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({...filters,period:$("period-filter").value,corrections})});
+      const response=await fetch("/api/v1/living/activities/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-CSRF-Token":document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({...filters,period:$("period-filter").value,corrections:[]})});
       if(response.status===401){location.assign("/");throw new Error("Sign in again.");}const result=await response.json();if(!response.ok)throw new Error(result.message||"Activity preview unavailable");if(id!==requestId)return null;data=result;render();return result;},
     openRecord,
     records(){return data?data.records:[];},
-    export(){return data?{...data,corrections}:null;}
+    export(){return data;}
   };
   showTab(location.hash.slice(1));
 }());

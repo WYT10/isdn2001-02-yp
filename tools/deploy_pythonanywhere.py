@@ -43,7 +43,7 @@ def sources(folder=WEB):
         raise ValueError("Incomplete web source directory")
     hashes = {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}
     release = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
-    files["release.json"] = (json.dumps({"release": release, "version": "0.1.0", "files": hashes}, indent=2) + "\n").encode()
+    files["release.json"] = (json.dumps({"release": release, "version": "0.2.0", "schema_version": 2, "files": hashes}, indent=2) + "\n").encode()
     return files, release
 
 
@@ -123,7 +123,8 @@ def health_check(domain, expected_release=None):
         results[endpoint] = result
     if expected_release and results["healthz"].get("release") != expected_release:
         raise RuntimeError("The running release does not match the uploaded files")
-    if results["readyz"].get("database") != "ok" or results["readyz"].get("schema_version") != 1:
+    version = results["readyz"].get("schema_version")
+    if results["readyz"].get("database") != "ok" or version not in (1, 2) or (expected_release and version != 2):
         raise RuntimeError("Database readiness check failed")
     return results
 
@@ -155,6 +156,11 @@ def account_check(client, remote_dir, domain, expected_release):
 def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=wait_healthy):
     old_manifest = client.get_file(remote_dir + "/release.json")
     try:
+        old_schema = json.loads(old_manifest or b"{}").get("schema_version", 1)
+    except (ValueError, TypeError):
+        old_schema = 1
+    new_schema = json.loads(files["release.json"]).get("schema_version", 1)
+    try:
         previous = json.loads(old_manifest or b"{}").get("files", {})
     except (ValueError, TypeError):
         previous = {}
@@ -174,11 +180,13 @@ def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=w
     (backup_dir / "snapshot.json").write_text(json.dumps({"missing": [name for name, body in before.items() if body is None]}, indent=2))
     attempted = []
     reload_acknowledged = True
+    reload_requested = False
     try:
         for name in changed:
             attempted.append(name)
             client.put_file(remote_dir + "/" + name, files[name])
         try:
+            reload_requested = True
             client.reload(domain)
         except OSError:
             # A lost response does not establish whether the server reloaded.
@@ -186,6 +194,8 @@ def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=w
             reload_acknowledged = False
         result = check(domain, release)
     except Exception as error:
+        if reload_requested and old_schema != new_schema:
+            raise RuntimeError("Update needs attention after a schema-changing reload; source-only rollback would be incompatible. Uploaded source retained. Source snapshot: " + str(backup_dir) + "; consistent pre-migration database backup is under the app instance/backups directory.") from error
         rollback_errors = []
         for name in reversed(attempted):
             try:

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "LiveGreen data API",
-    "version": "0.1.0",
-    "description": "SQLite-backed water-flow research starter. All times stored in UTC. Missing calibration is null. Analytics are descriptive statistics, not a trained data-mining model."
+    "version": "0.2.0",
+    "description": "SQLite schema 2: sensor readings plus account-owned activities, evidence, line items, factor snapshots, revision history and daily series. Account keys are independent of sensor/admin keys."
   },
   "security": [
     {
@@ -636,6 +636,479 @@
           },
           "403": {
             "description": "Viewer/admin required; session POSTs require X-CSRF-Token"
+          }
+        }
+      }
+    },
+    "/api/v1/demo/overview": {
+      "get": {
+        "summary": "Public demo summary and daily series",
+        "description": "Optional ISO start/end, at most 366 days; physical quantities, domains, currencies, coverage and reference period.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/demo/events": {
+      "get": {
+        "summary": "Stored fictional activities",
+        "description": "Optional start/end. Includes timestamps, line items, estimates, source and revision.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/demo/export": {
+      "get": {
+        "summary": "Export demo records",
+        "description": "format=json or csv.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/activity-accounts": {
+      "post": {
+        "summary": "Provision activity account",
+        "description": "Admin only. Body: name and optional copy_demo boolean. Returns a scoped account token once.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/activity-session": {
+      "post": {
+        "summary": "Connect browser to account",
+        "description": "Body: token. Requires X-CSRF-Token. Uses HttpOnly signed session.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Disconnect account",
+        "description": "Requires X-CSRF-Token.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "security": []
+      },
+      "get": {
+        "summary": "Read current browser activity session",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Own account, or null when disconnected"
+          }
+        }
+      }
+    },
+    "/api/v1/activity-account": {
+      "get": {
+        "summary": "Current activity account",
+        "description": "Bearer account token or connected browser; no cross-account selector.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        }
+      }
+    },
+    "/api/v1/activity-overview": {
+      "get": {
+        "summary": "Owned summary and daily series",
+        "description": "Same shape as demo overview. Optional start/end.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        }
+      }
+    },
+    "/api/v1/activity-events": {
+      "get": {
+        "summary": "List owned records",
+        "description": "Optional start/end, include_undated=1. Capture date is not substituted for missing event time.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        }
+      },
+      "post": {
+        "summary": "Save activity with retry ID",
+        "description": "id, kind shopping/transport/household, category, name, occurred_at (timezone-qualified or null), timezone, quantity, unit, factor_id, share, status confirmed/needs_review/excluded, items, metadata. Exact retries 200, new 201, conflicts 409. Items: name, quantity, unit, factor_id, packaging_g. Demo factors cannot estimate real-account records.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/activity-events/{id}": {
+      "patch": {
+        "summary": "Correct with revision lock",
+        "description": "expected_revision plus changed fields. Appends history and estimate snapshot. status=excluded preserves evidence while excluding totals.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/api/v1/activity-events/{id}/history": {
+      "get": {
+        "summary": "Read owned revision history",
+        "description": "Ownership checked.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/api/v1/activity-imports/record-today": {
+      "post": {
+        "summary": "Import reviewed Android JSON",
+        "description": "schemaVersion=1, transactions=1-100 with id, source, merchant, amountMinor, currency, eventAt (nullable), timeZone, optional capture/location evidence. Atomic and duplicate-safe. Drafts need item confirmation.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/activity-export": {
+      "get": {
+        "summary": "Export owned records",
+        "description": "format=json or csv.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        }
+      }
+    },
+    "/api/v1/activity-factors": {
+      "get": {
+        "summary": "Read factor registry",
+        "description": "Unit, region, year, classification, scope, source and version.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/activity-spec": {
+      "get": {
+        "summary": "Read API specification",
+        "description": "Public when demo dashboard is public.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid fields"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Access or CSRF denied"
+          },
+          "409": {
+            "description": "Conflicting retry or revision"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/activity-events/{id}/evidence": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Original evidence for an owned activity",
+        "responses": {
+          "200": {
+            "description": "Original imported evidence, or null"
+          },
+          "404": {
+            "description": "Unknown or foreign activity"
           }
         }
       }

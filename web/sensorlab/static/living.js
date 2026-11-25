@@ -32,7 +32,7 @@
     const result=state.surface.update(state.data,map,state.dark);
     $("surface-status").hidden=false;
     $("surface-status").dataset.warning=String(!result.streetTiles);
-    set("surface-status","Height = smoothed density (kg CO₂e/km²), exaggerated for clarity."+
+    set("surface-status","Height = smoothed density (kg CO₂e/kmÂ²), exaggerated for clarity."+
       (result.streetTiles?"":" Street texture unavailable; activity locations and heights are still shown."));
   }
   async function setMapView(view) {
@@ -157,7 +157,7 @@
     state.data=data;set("footprint-total",format(data.total_kg));set("inside-total",format(data.inside_kg));set("outside-total",format(data.outside_kg));
     $("clear-category").hidden=data.category==="all";$("open-category-records").hidden=data.category==="all";
     set("footprint-count",data.activities.length+" activities in this view");set("activity-count",data.activities.length+" activities");
-    set("data-classification","DEMO ACTIVITIES");
+    set("data-classification",state.activityData.classification==="synthetic"?"ALEX · DEMO ACCOUNT":"SAVED ACTIVITIES");
     const key=$("category-key");key.replaceChildren();data.categories.forEach(row=>{const button=document.createElement("button");button.type="button";
       const dot=document.createElement("span");dot.className="category-dot";dot.style.background=colors[row.name];
       const name=document.createElement("span");name.textContent=title(row.name);const amount=document.createElement("span");amount.className="category-amount";amount.textContent=format(row.co2e_kg)+" kg";
@@ -171,7 +171,7 @@
     const leader=data.categories[0];const reflection=leader&&data.total_kg?title(leader.name)+" contributes "+format(leader.share*100,1)+"% of this selection.":"No positive emissions in this selection.";
     set("reflection-title",reflection);const suggestion=leader&&leader.name==="transport"?"Which journey could you review for a lower-emission travel option?":leader&&leader.name==="energy"?"Which home energy use could you understand better before changing it?":leader&&leader.name==="shopping"?"Which purchase could you reconsider, repair or use for longer?":"Which activity would you like to understand or change next?";
     set("reflection-copy",suggestion+" These are reflection questions, not measured savings.");set("prompt-title",reflection);set("prompt-body",suggestion);
-    set("source-detail",data.provenance.source+". "+data.provenance.storage+".");set("method-detail",data.provenance.method+". Grid integral: "+format(data.grid?data.grid.integrated_kg:0,3)+" kg CO₂e; selected input total: "+format(data.total_kg,3)+" kg CO₂e.");set("limit-detail",data.provenance.limitations);
+    set("source-detail",data.provenance.source+". "+data.provenance.storage+".");set("method-detail",data.provenance.method+". Grid integral: "+format(data.grid?data.grid.integrated_kg:0,3)+" kg CO₂e; mapped input total: "+format(data.mapped_kg??data.total_kg,3)+" kg CO₂e.");set("limit-detail",data.provenance.limitations+(data.unlocated_records?" "+data.unlocated_records+" estimated records lack a location; they remain in totals and treemap, and are excluded from the map.":""));
     treemap();landscape();if(fitMap)fit();else updateSurface();set("living-status","Synthetic activities · ready");
   }
   async function refresh(fitMap=true) {

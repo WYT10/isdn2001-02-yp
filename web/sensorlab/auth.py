@@ -52,6 +52,10 @@ def allow_public_dashboard(function):
 
     @wraps(function)
     def wrapped(*args, **kwargs):
+        if "Authorization" not in request.headers and session.get("activity_account_id"):
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                check_csrf(request.headers.get("X-CSRF-Token"))
+            return function(*args, **kwargs)
         if (current_app.config.get("PUBLIC_DASHBOARD") is True and
                 "Authorization" not in request.headers and not session.get("role")):
             if request.method not in ("GET", "HEAD", "OPTIONS"):

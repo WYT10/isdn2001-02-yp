@@ -42,7 +42,7 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
-        if app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer"):
+        if app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer") or session.get("activity_account_id"):
             return render_template("living.html", role=session.get("role"))
         return render_template("login.html")
 
@@ -74,14 +74,15 @@ def create_app(test_config=None):
 
     @app.get("/healthz")
     def health():
-        return jsonify(status="ok", service="sensorlab", version="0.1.0", release=app.config["RELEASE"])
+        return jsonify(status="ok", service="sensorlab", version="0.2.0", release=app.config["RELEASE"])
 
     @app.get("/readyz")
     def ready():
         try:
             version = db.get_db().execute("PRAGMA user_version").fetchone()[0]
             db.get_db().execute("SELECT 1 FROM readings LIMIT 1").fetchone()
-            if version != 1:
+            db.get_db().execute("SELECT 1 FROM activity_events LIMIT 1").fetchone()
+            if version != 2:
                 return jsonify(status="unavailable"), 503
         except sqlite3.Error:
             return jsonify(status="unavailable"), 503
@@ -91,7 +92,7 @@ def create_app(test_config=None):
     def response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        map_page = request.path == "/living" or (request.path == "/" and (app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer")))
+        map_page = request.path == "/living" or (request.path == "/" and (app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer") or session.get("activity_account_id")))
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin" if map_page else "same-origin"
         images = "https://tile.openstreetmap.org" if map_page else ""
         response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: {images}; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
@@ -115,6 +116,8 @@ def create_app(test_config=None):
     from .living import living
     from . import activities
     app.register_blueprint(living)
+    from .activity_api import activity_api
+    app.register_blueprint(activity_api)
 
     @app.cli.command("backup-db")
     @click.argument("destination", type=click.Path())

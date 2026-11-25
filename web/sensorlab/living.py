@@ -21,8 +21,8 @@ EXAMPLE = [
 
 
 def validate_activities(rows):
-    if not isinstance(rows, list) or len(rows) > 50:
-        abort(400, description="Use an array of at most 50 activities")
+    if not isinstance(rows, list) or len(rows) > 500:
+        abort(400, description="Use an array of at most 500 activities")
     result = []
     for row in rows:
         if not isinstance(row, dict) or set(row) != {"name", "category", "scope", "lat", "lon", "co2e_kg"}:
@@ -101,7 +101,7 @@ def preview(rows, scope, category, bandwidth, classification):
 
 @living.get("/living")
 def page():
-    if current_app.config["PUBLIC_DASHBOARD"] is not True and session.get("role") not in ("admin", "viewer"):
+    if current_app.config["PUBLIC_DASHBOARD"] is not True and session.get("role") not in ("admin", "viewer") and not session.get("activity_account_id"):
         return redirect(url_for("index"))
     return render_template("living.html", role=session.get("role"))
 
