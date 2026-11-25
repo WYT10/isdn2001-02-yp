@@ -48,7 +48,6 @@ bool flow_timing_edge(flow_timing_t *s, bool rising, uint32_t ticks)
     return valid;
 }
 
-#ifndef FLOW_SENSOR_HOST_TEST
 #include "driver/gpio.h"
 #include "driver/mcpwm_cap.h"
 #include "driver/pulse_cnt.h"
@@ -56,12 +55,6 @@ bool flow_timing_edge(flow_timing_t *s, bool rising, uint32_t ticks)
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 #include <string.h>
-#include "driver/ledc.h"
-#include "dsps_mulc.h"
-#include "esp_cpu.h"
-#include "freertos/task.h"
-#include <inttypes.h>
-#include <stdio.h>
 
 static pcnt_unit_handle_t counter;
 static pcnt_channel_handle_t counter_channel;
@@ -178,139 +171,3 @@ void flow_sensor_snapshot(flow_sensor_snapshot_t *out)
         && after - last_cycle_us < settings.stale_after_us && timing.period > 0;
     portEXIT_CRITICAL(&lock);
 }
-
-void flow_sensor_stop(void)
-{
-    ESP_ERROR_CHECK(pcnt_unit_stop(counter));
-    if (capture_channel) {
-        ESP_ERROR_CHECK(mcpwm_capture_channel_disable(capture_channel));
-        ESP_ERROR_CHECK(mcpwm_capture_timer_stop(capture_timer));
-        ESP_ERROR_CHECK(mcpwm_capture_timer_disable(capture_timer));
-        ESP_ERROR_CHECK(mcpwm_del_capture_channel(capture_channel));
-        ESP_ERROR_CHECK(mcpwm_del_capture_timer(capture_timer));
-        capture_channel = NULL;
-        capture_timer = NULL;
-    }
-    ESP_ERROR_CHECK(pcnt_unit_disable(counter));
-    ESP_ERROR_CHECK(pcnt_del_channel(counter_channel));
-    ESP_ERROR_CHECK(pcnt_del_unit(counter));
-    counter_channel = NULL;
-    counter = NULL;
-}
-
-static float input[256] __attribute__((aligned(16)));
-static float ansi_output[256] __attribute__((aligned(16)));
-static float dsp_output[256] __attribute__((aligned(16)));
-static volatile float benchmark_sink;
-
-void flow_sensor_benchmark(void)
-{
-    for (int i = 0; i < 256; ++i) input[i] = i * 0.25f;
-    const int lengths[] = {1, 16, 256};
-    for (unsigned j = 0; j < sizeof(lengths) / sizeof(lengths[0]); ++j) {
-        int n = lengths[j];
-        const float scale = 0.2f; /* Arbitrary test coefficient, not calibration. */
-        ESP_ERROR_CHECK(dsps_mulc_f32_ansi(input, ansi_output, n, scale, 1, 1));
-        ESP_ERROR_CHECK(dsps_mulc_f32(input, dsp_output, n, scale, 1, 1));
-        float max_error = 0;
-        bool correct = true;
-        for (int i = 0; i < n; ++i) {
-            float expected = input[i] * scale;
-            float error = fmaxf(fabsf(expected - dsp_output[i]),
-                                fabsf(expected - ansi_output[i]));
-            correct = correct && isfinite(ansi_output[i]) && isfinite(dsp_output[i]);
-            if (error > max_error) max_error = error;
-        }
-        uint32_t ansi_best = UINT32_MAX, dsp_best = UINT32_MAX;
-        for (int trial = 0; trial < 7; ++trial) {
-            uint32_t start = esp_cpu_get_cycle_count();
-            for (int k = 0; k < 1000; ++k)
-                dsps_mulc_f32_ansi(input, ansi_output, n, scale, 1, 1);
-            uint32_t elapsed = esp_cpu_get_cycle_count() - start;
-            if (elapsed < ansi_best) ansi_best = elapsed;
-            start = esp_cpu_get_cycle_count();
-            for (int k = 0; k < 1000; ++k)
-                dsps_mulc_f32(input, dsp_output, n, scale, 1, 1);
-            elapsed = esp_cpu_get_cycle_count() - start;
-            if (elapsed < dsp_best) dsp_best = elapsed;
-            benchmark_sink = ansi_output[n - 1] + dsp_output[n - 1];
-            vTaskDelay(1);
-        }
-        printf("{\"type\":\"benchmark\",\"library\":\"esp-dsp-1.8.2\","
-               "\"operation\":\"mulc_f32\",\"n\":%d,\"cpu_mhz_config\":%d,"
-               "\"core\":%d,\"ansi_cycles_per_call\":%.3f,"
-               "\"dsp_cycles_per_call\":%.3f,\"max_abs_error\":%.9g,"
-               "\"pass\":%s}\n", n, CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-               xPortGetCoreID(), ansi_best / 1000.0, dsp_best / 1000.0,
-               (double)max_error, correct && max_error <= 1e-6f ? "true" : "false");
-    }
-}
-
-void flow_sensor_selftest(const flow_sensor_config_t *defaults, int test_gpio)
-{
-    if (!defaults || test_gpio == defaults->gpio) {
-        ESP_ERROR_CHECK(ESP_ERR_INVALID_ARG);
-        return;
-    }
-    const struct { uint32_t hz; uint32_t duty; uint32_t ms; bool timing; } cases[] = {
-        {5, 102, 1500, true}, {75, 256, 1000, true},
-        {150, 410, 1000, true}, {1000, 256, 1000, true},
-        {20000, 256, 2000, false}, /* Crosses the 30000-count hardware limit. */
-    };
-    bool all_pass = true;
-    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-        flow_sensor_config_t sensor = *defaults;
-        sensor.gpio = test_gpio;
-        sensor.capture_timing = cases[i].timing;
-        flow_sensor_start(&sensor);
-        ledc_timer_bit_t bits = cases[i].hz <= 1000 ? LEDC_TIMER_14_BIT : LEDC_TIMER_9_BIT;
-        ledc_timer_config_t timer = {
-            .speed_mode = LEDC_LOW_SPEED_MODE, .timer_num = LEDC_TIMER_0,
-            .duty_resolution = bits, .freq_hz = cases[i].hz,
-            .clk_cfg = LEDC_AUTO_CLK,
-        };
-        ESP_ERROR_CHECK(ledc_timer_config(&timer));
-        ledc_channel_config_t channel = {
-            .gpio_num = test_gpio, .speed_mode = LEDC_LOW_SPEED_MODE,
-            .channel = LEDC_CHANNEL_0, .timer_sel = LEDC_TIMER_0,
-            .duty = cases[i].duty << (bits - LEDC_TIMER_9_BIT),
-        };
-        ESP_ERROR_CHECK(ledc_channel_config(&channel));
-        ESP_ERROR_CHECK(gpio_input_enable(test_gpio));
-        vTaskDelay(pdMS_TO_TICKS(500));
-        flow_sensor_snapshot_t begin, end;
-        flow_sensor_snapshot(&begin);
-        vTaskDelay(pdMS_TO_TICKS(cases[i].ms));
-        flow_sensor_snapshot(&end);
-        uint32_t pulses = flow_count_delta(begin.count, end.count);
-        uint64_t dt = end.time_us - begin.time_us;
-        uint32_t actual_hz = ledc_get_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0);
-        double expected = actual_hz * (double)dt / 1e6;
-        bool pass = fabs(pulses - expected) <= 2.0 + expected * 0.002;
-        double duty = -1;
-        double period_hz = -1;
-        if (cases[i].timing) {
-            duty = 100.0 * end.high_ticks / (end.period_ticks ? end.period_ticks : 1);
-            period_hz = end.period_ticks ? (double)end.capture_hz / end.period_ticks : 0;
-            pass = pass && end.timing_valid && fabs(period_hz - actual_hz) < actual_hz * 0.02
-                && fabs(duty - 100.0 * cases[i].duty / 512.0) < 2.0;
-        }
-        ESP_ERROR_CHECK(ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0));
-        vTaskDelay(pdMS_TO_TICKS(50));
-        flow_sensor_snapshot(&begin);
-        vTaskDelay(pdMS_TO_TICKS(sensor.stale_after_us / 1000 + 100));
-        flow_sensor_snapshot(&end);
-        bool stopped = end.count == begin.count && !end.timing_valid;
-        pass = pass && stopped;
-        all_pass = all_pass && pass;
-        printf("{\"type\":\"selftest\",\"gpio\":%d,\"hz\":%" PRIu32 ","
-               "\"pulses\":%" PRIu32 ",\"expected_pulses\":%.3f,"
-               "\"period_hz\":%.3f,\"duty_pct\":%.3f,\"stopped\":%s,\"pass\":%s}\n",
-               test_gpio, actual_hz, pulses, expected, period_hz, duty,
-               stopped ? "true" : "false", pass ? "true" : "false");
-        flow_sensor_stop();
-        ESP_ERROR_CHECK(gpio_reset_pin(test_gpio));
-    }
-    printf("{\"type\":\"selftest_summary\",\"pass\":%s}\n", all_pass ? "true" : "false");
-}
-#endif

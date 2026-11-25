@@ -44,3 +44,18 @@ def require_roles(*roles):
             return function(*args, **kwargs)
         return wrapped
     return decorate
+
+
+def allow_public_dashboard(function):
+    """Allow anonymous synthetic previews without granting a viewer session."""
+    authenticated = require_roles("viewer", "admin")(function)
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        if (current_app.config.get("PUBLIC_DASHBOARD") is True and
+                "Authorization" not in request.headers and not session.get("role")):
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                check_csrf(request.headers.get("X-CSRF-Token"))
+            return function(*args, **kwargs)
+        return authenticated(*args, **kwargs)
+    return wrapped

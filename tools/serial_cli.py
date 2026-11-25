@@ -35,6 +35,11 @@ def main():
         port.rts = False
         port.port = args.port
         port.open()
+        # Native USB may drop the first write immediately after opening.
+        time.sleep(1)
+        port.write(b"\x03")  # Clear any unfinished command without executing it.
+        port.flush()
+        time.sleep(0.1)
         port.reset_input_buffer()
         port.write((command + "\n").encode("ascii"))
         port.flush()
@@ -68,15 +73,15 @@ def main():
                 ack = record
             if record.get("type") == "wifi_command" and record.get("action") == action:
                 completion = record
-            done = ack and (ack.get("status") != "queued" or completion)
+            done = completion or (ack and ack.get("status") != "queued")
             if done:
-                success = ack.get("status") in ("ok", "queued") and (
+                success = (not ack or ack.get("status") in ("ok", "queued")) and (
                     not completion or completion.get("status") == "ok")
                 if not args.watch:
                     break
                 watching = True
                 deadline = time.monotonic() + args.watch
-    if ack is None or (ack.get("status") == "queued" and completion is None):
+    if not completion and (ack is None or ack.get("status") == "queued"):
         raise SystemExit("No completed command reply. Check the port, close other monitors, and send help.")
     if not success:
         raise SystemExit(1)

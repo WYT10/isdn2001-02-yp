@@ -24,10 +24,9 @@ typedef struct {
     bool timing_valid;
 } flow_sensor_snapshot_t;
 
-/* One hardware sensor; start copies the configuration. Stop before restarting. */
+/* One hardware sensor; start copies the configuration. */
 void flow_sensor_start(const flow_sensor_config_t *config);
 void flow_sensor_snapshot(flow_sensor_snapshot_t *out);
-void flow_sensor_stop(void);
 
 typedef struct {
     uint32_t rise;
@@ -43,6 +42,3 @@ double flow_frequency(uint64_t pulses, uint64_t elapsed_us);
 double flow_lpm(double hz, double pulses_per_litre);
 double flow_litres(uint64_t pulses, double pulses_per_litre);
 bool flow_timing_edge(flow_timing_t *state, bool rising, uint32_t ticks);
-
-void flow_sensor_benchmark(void);
-void flow_sensor_selftest(const flow_sensor_config_t *defaults, int test_gpio);

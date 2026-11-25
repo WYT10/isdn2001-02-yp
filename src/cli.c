@@ -8,7 +8,7 @@ const char *cli_command_name(cli_command_t command)
 {
     static const char *const names[] = {
         "help", "status", "get", "set", "stream", "wifi status", "wifi scan",
-        "wifi reconnect", "wifi ap on", "wifi ap only", "wifi auto", "benchmark", "reboot",
+        "wifi reconnect", "wifi ap on", "wifi ap only", "wifi auto", "reboot",
     };
     return (unsigned)command < sizeof(names) / sizeof(names[0]) ? names[command] : "unknown";
 }
@@ -69,7 +69,7 @@ bool cli_parse(const char *line, cli_request_t *out, const char **error)
     if (!count) return false;
     cli_request_t request = {0};
     if (count == 1) {
-        const cli_command_t commands[] = {CLI_HELP, CLI_STATUS, CLI_GET, CLI_BENCHMARK, CLI_REBOOT};
+        const cli_command_t commands[] = {CLI_HELP, CLI_STATUS, CLI_GET, CLI_REBOOT};
         for (unsigned i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i)
             if (!strcmp(args[0], cli_command_name(commands[i]))) {
                 request.command = commands[i];
@@ -121,9 +121,13 @@ bool cli_parse(const char *line, cli_request_t *out, const char **error)
     return true;
 }
 
-#ifndef CLI_HOST_TEST
 #include <stdio.h>
+#include "sdkconfig.h"
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
+#else
+#include "driver/uart.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -136,10 +140,20 @@ static void cli_task(void *context)
     (void)context;
     cli_input_t input = {0};
     unsigned char bytes[64];
-    printf("{\"type\":\"cli\",\"status\":\"ready\",\"transport\":\"usb_serial_jtag\","
-           "\"hint\":\"send help followed by Enter\",\"max_line\":%d}\n", CLI_LINE_CAPACITY - 1);
+    printf("{\"type\":\"cli\",\"status\":\"ready\",\"transport\":\"%s\","
+           "\"hint\":\"send help followed by Enter\",\"max_line\":%d}\n",
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+           "usb_serial_jtag",
+#else
+           "uart",
+#endif
+           CLI_LINE_CAPACITY - 1);
     while (true) {
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
         int count = usb_serial_jtag_read_bytes(bytes, sizeof(bytes), pdMS_TO_TICKS(50));
+#else
+        int count = uart_read_bytes(CONFIG_ESP_CONSOLE_UART_NUM, bytes, sizeof(bytes), pdMS_TO_TICKS(50));
+#endif
         for (int i = 0; i < count; ++i) {
             cli_input_result_t result = cli_input_feed(&input, bytes[i]);
             if (result == CLI_INPUT_OVERFLOW) {
@@ -162,12 +176,35 @@ esp_err_t cli_start(const cli_settings_t *settings, cli_submit_t callback, void 
     if (!settings || !callback) return ESP_ERR_INVALID_ARG;
     if (!settings->enabled) return ESP_OK;
     if (started) return ESP_ERR_INVALID_STATE;
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
         config.rx_buffer_size = 512;
         esp_err_t error = usb_serial_jtag_driver_install(&config);
         if (error != ESP_OK) return error;
     }
+#else
+    const uart_port_t port = CONFIG_ESP_CONSOLE_UART_NUM;
+    if (!uart_is_driver_installed(port)) {
+        uart_config_t config = {
+            .baud_rate = CONFIG_ESP_CONSOLE_UART_BAUDRATE,
+            .data_bits = UART_DATA_8_BITS,
+            .parity = UART_PARITY_DISABLE,
+            .stop_bits = UART_STOP_BITS_1,
+            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+            .source_clk = UART_SCLK_DEFAULT,
+        };
+        esp_err_t error = uart_param_config(port, &config);
+        if (error != ESP_OK) return error;
+#if CONFIG_ESP_CONSOLE_UART_CUSTOM
+        error = uart_set_pin(port, CONFIG_ESP_CONSOLE_UART_TX_GPIO, CONFIG_ESP_CONSOLE_UART_RX_GPIO,
+                             UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        if (error != ESP_OK) return error;
+#endif
+        error = uart_driver_install(port, 512, 0, 0, NULL, 0);
+        if (error != ESP_OK) return error;
+    }
+#endif
     /* Read through the driver, keep existing stdout/ESP log transport unchanged. */
     submit = callback;
     submit_context = context;
@@ -175,4 +212,3 @@ esp_err_t cli_start(const cli_settings_t *settings, cli_submit_t callback, void 
     started = true;
     return ESP_OK;
 }
-#endif

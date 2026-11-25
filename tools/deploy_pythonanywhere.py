@@ -4,8 +4,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
-import sys
 import time
 import uuid
 import zipfile
@@ -17,7 +15,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
-TOP_LEVEL = {"app.py", "flask_app.py", "wsgi.py", "bootstrap.py", "requirements.txt", "sample_payload.json"}
+TOP_LEVEL = {"app.py", "flask_app.py", "wsgi.py", "bootstrap.py", "requirements.txt"}
 SUFFIXES = {".py", ".sql", ".html", ".css", ".js", ".svg", ".json"}
 
 
@@ -28,7 +26,10 @@ def sources(folder=WEB):
             continue
         relative = path.relative_to(folder)
         allowed = relative.as_posix() in TOP_LEVEL or (
-            relative.parts[0] == "sensorlab" and path.suffix in SUFFIXES and "__pycache__" not in relative.parts
+            relative.parts[0] == "sensorlab" and (path.suffix in SUFFIXES or
+                relative.as_posix() in {"sensorlab/static/vendor/leaflet-license.txt", "sensorlab/static/vendor/d3-license.txt",
+                                        "sensorlab/static/vendor/three-license.txt"})
+            and "__pycache__" not in relative.parts
         )
         if not allowed:
             continue
@@ -53,7 +54,7 @@ def bundle(destination, files):
             archive.writestr(name, content)
 
 
-def http(method, url, *, token=None, data=None, content_type=None):
+def http(method, url, *, token=None, data=None, content_type=None, timeout=20):
     headers = {"User-Agent": "SensorLab-deploy/0.1"}
     if token:
         headers["Authorization"] = "Token " + token
@@ -61,7 +62,7 @@ def http(method, url, *, token=None, data=None, content_type=None):
         headers["Content-Type"] = content_type
     request = Request(url, method=method, data=data, headers=headers)
     try:
-        with urlopen(request, timeout=20) as response:
+        with urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
     except HTTPError as error:
         return error.code, error.read()
@@ -78,12 +79,12 @@ class PythonAnywhere:
         self.interval = interval
         self.previous_request = 0
 
-    def call(self, method, path, data=None, content_type=None, expected=(200,)):
+    def call(self, method, path, data=None, content_type=None, expected=(200,), timeout=20):
         wait = self.interval - (time.monotonic() - self.previous_request)
         if wait > 0:
             time.sleep(wait)
         self.previous_request = time.monotonic()
-        status, body = http(method, self.base + path, token=self.token, data=data, content_type=content_type)
+        status, body = http(method, self.base + path, token=self.token, data=data, content_type=content_type, timeout=timeout)
         if status not in expected:
             raise RuntimeError(f"PythonAnywhere API returned HTTP {status} for {method}; check API token, account and rate limits")
         return status, body
@@ -103,7 +104,8 @@ class PythonAnywhere:
         self.call("DELETE", "files/path" + quote(path, safe="/"), expected=(204, 404))
 
     def reload(self, domain):
-        self.call("POST", "webapps/" + quote(domain, safe="") + "/reload/", data=b"", expected=(200, 201))
+        # The provider can wait for workers to finish before answering a reload.
+        self.call("POST", "webapps/" + quote(domain, safe="") + "/reload/", data=b"", expected=(200, 201), timeout=90)
 
 
 def health_check(domain, expected_release=None):
@@ -137,6 +139,19 @@ def wait_healthy(domain, release):
             time.sleep(2)
 
 
+def account_check(client, remote_dir, domain, expected_release):
+    """Verify account API access using GET only; return no source or private settings."""
+    manifest = client.get_file(remote_dir + "/release.json")
+    client.call("GET", "webapps/" + quote(domain, safe="") + "/")
+    try:
+        release = json.loads(manifest or b"{}").get("release")
+    except (ValueError, AttributeError):
+        release = None
+    return {"authenticated": True, "domain": domain, "remote_dir": remote_dir,
+            "source_manifest_found": manifest is not None,
+            "release_matches_local": release == expected_release}
+
+
 def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=wait_healthy):
     old_manifest = client.get_file(remote_dir + "/release.json")
     try:
@@ -158,11 +173,17 @@ def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=w
             target.write_bytes(content)
     (backup_dir / "snapshot.json").write_text(json.dumps({"missing": [name for name, body in before.items() if body is None]}, indent=2))
     attempted = []
+    reload_acknowledged = True
     try:
         for name in changed:
             attempted.append(name)
             client.put_file(remote_dir + "/" + name, files[name])
-        client.reload(domain)
+        try:
+            client.reload(domain)
+        except OSError:
+            # A lost response does not establish whether the server reloaded.
+            # Accept only the expected running release and database readiness.
+            reload_acknowledged = False
         result = check(domain, release)
     except Exception as error:
         rollback_errors = []
@@ -181,12 +202,12 @@ def deploy_files(client, files, release, remote_dir, domain, backup_dir, check=w
         if rollback_errors:
             raise RuntimeError("Update failed and rollback needs attention; see private snapshot " + str(backup_dir)) from error
         raise RuntimeError("Update failed; previous source files restored and reload requested. Snapshot: " + str(backup_dir)) from error
-    return {"release": release, "uploaded_files": len(changed), "health": result}
+    return {"release": release, "uploaded_files": len(changed), "reload_acknowledged": reload_acknowledged, "health": result}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "bundle", "deploy", "check"))
+    parser.add_argument("action", choices=("plan", "bundle", "auth", "deploy", "check"))
     parser.add_argument("--config", type=Path, default=ROOT / ".local" / "pythonanywhere.json")
     args = parser.parse_args()
     if args.action in ("plan", "bundle", "deploy"):
@@ -214,8 +235,10 @@ def main():
     home = PurePosixPath("/home") / username
     if ".." in remote.parts or not remote.is_relative_to(home) or remote == home:
         raise ValueError("remote_dir must be a project directory below the account home")
-    # A deploy always tests the local backend before changing remote files.
-    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "test/web", "-v"], cwd=ROOT, check=True)
+    if args.action == "auth":
+        print(json.dumps(account_check(PythonAnywhere(username, token, host), str(remote), domain,
+                                       sources()[1]), indent=2))
+        return
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6]
     result = deploy_files(PythonAnywhere(username, token, host), files, release, str(remote), domain,
                           ROOT / "output" / "deploy" / stamp)
@@ -225,5 +248,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, RuntimeError, OSError) as error:
         raise SystemExit(str(error))

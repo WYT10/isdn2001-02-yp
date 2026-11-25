@@ -1,6 +1,8 @@
 #include "flow_sensor.h"
 #include "wifi.h"
 #include "cli.h"
+#include "wifi_private.h"
+#include "sdkconfig.h"
 #include "esp_cpu.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -12,24 +14,34 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifndef FLOW_RUN_SELF_TEST
-#define FLOW_RUN_SELF_TEST 0
-#endif
-
 typedef struct {
+    const char *board_name;
+    const char *sensor_pin;
     flow_sensor_config_t sensor;
     wifi_settings_t wifi;
+    wifi_cloud_settings_t cloud;
     cli_settings_t cli;
-    struct {
-        bool benchmark;
-        bool self_test;
-        int test_gpio;
-    } diagnostics;
 } app_config_t;
 
 static const app_config_t app = {
+#if CONFIG_IDF_TARGET_ESP32
+    .board_name = "ESP32-WROOM",
+    .sensor_pin = "D15 / GPIO15",
+#elif defined(FLOW_BOARD_S3_DEVKIT)
+    .board_name = "ESP32-S3 DevKit",
+    .sensor_pin = "GPIO10",
+#else
+    .board_name = "XIAO ESP32-S3",
+    .sensor_pin = "D10 / GPIO9",
+#endif
     .sensor = {
+#if CONFIG_IDF_TARGET_ESP32
+        .gpio = 15, /* WROOM D15: sensor input only. */
+#elif defined(FLOW_BOARD_S3_DEVKIT)
+        .gpio = 10, /* S3 dev-kit GPIO10: sensor input only. */
+#else
         .gpio = 9, /* XIAO D10: sensor input only. */
+#endif
         .pull_up = true,
         .capture_timing = true,
         .glitch_filter_ns = 1000,
@@ -39,13 +51,29 @@ static const app_config_t app = {
         .pulses_per_litre = 0.0, /* Unknown until calibrated. */
     },
     .wifi = {
+#if SENSORLAB_PRIVATE_ENTERPRISE
+        .ssid = SENSORLAB_EAP_SSID,
+        .enterprise = {
+            .enabled = true,
+            .identity = SENSORLAB_EAP_IDENTITY,
+            .username = SENSORLAB_EAP_USERNAME,
+            .password = SENSORLAB_EAP_PASSWORD,
+            .server_domain = SENSORLAB_EAP_SERVER_DOMAIN,
+            .build_epoch = SENSORLAB_BUILD_EPOCH,
+        },
+#else
         .ssid = "ABCD",
         .password = "00000000",
+#endif
         .retry_delay_ms = 5000,
         .status_interval_ms = 60000,
         .fallback = {
             .enabled = true,
+#if CONFIG_IDF_TARGET_ESP32
+            .ssid = "SensorLab-WROOM",
+#else
             .ssid = "SensorLab-Local",
+#endif
             .password = "00000000",
             .after_ms = 60000,
             .retry_delay_ms = 30000,
@@ -53,12 +81,16 @@ static const app_config_t app = {
             .max_clients = 4,
         },
     },
-    .cli = {.enabled = true, .stream = false},
-    .diagnostics = {
-        .benchmark = true,
-        .self_test = FLOW_RUN_SELF_TEST,
-        .test_gpio = 4, /* XIAO D3: disconnected during synthetic tests. */
+    .cloud = {
+        .enabled = SENSORLAB_PRIVATE_CLOUD,
+        .url = SENSORLAB_CLOUD_URL,
+        .device_token = SENSORLAB_CLOUD_TOKEN,
+        .label = "ZJ-S201C",
+        .batch_interval_ms = 3000,
+        .timeout_ms = 10000,
+        .build_epoch = SENSORLAB_BUILD_EPOCH,
     },
+    .cli = {.enabled = true, .stream = false},
 };
 
 typedef struct {
@@ -84,7 +116,7 @@ static bool apply_command(const cli_request_t *request, runtime_config_t *runtim
              "\"help\",\"status\",\"get [parameter]\",\"set report_ms 50..10000\","
              "\"set window_samples 1..32\",\"set pulses_per_litre 0..1e9\","
              "\"stream on|off\",\"wifi status\",\"wifi scan\",\"wifi reconnect\","
-             "\"wifi ap on\",\"wifi ap only\",\"wifi auto\",\"benchmark\",\"reboot\"],"
+             "\"wifi ap on\",\"wifi ap only\",\"wifi auto\",\"reboot\"],"
              "\"settings_volatile\":true,\"calibration_zero\":\"unknown\"}");
         return false;
     }
@@ -127,7 +159,6 @@ static bool apply_command(const cli_request_t *request, runtime_config_t *runtim
         return request->parameter != CLI_PARAM_PULSES_PER_LITRE;
     }
     if (request->command == CLI_STREAM) runtime->stream = request->value != 0;
-    else if (request->command == CLI_BENCHMARK) flow_sensor_benchmark();
     else if (request->command == CLI_REBOOT) {
         puts("{\"type\":\"cli\",\"command\":\"reboot\",\"status\":\"ok\"}");
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -150,25 +181,24 @@ static bool apply_command(const cli_request_t *request, runtime_config_t *runtim
 void app_main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
-    /* Allow time for native USB to enumerate and a monitor to attach. */
+    /* Allow time for the serial bridge/native USB and a monitor to attach. */
     vTaskDelay(pdMS_TO_TICKS(3000));
-    printf("{\"type\":\"boot\",\"sensor\":\"ZJ-S201C\",\"pin\":\"D10\","
+    printf("{\"type\":\"boot\",\"board\":\"%s\",\"sensor\":\"ZJ-S201C\",\"pin\":\"%s\","
            "\"gpio\":%d,\"report_ms\":%" PRIu32 ",\"pulses_per_litre\":%.6f,"
-           "\"calibrated\":%s,\"selftest\":%s}\n", app.sensor.gpio,
+           "\"calibrated\":%s}\n", app.board_name, app.sensor_pin, app.sensor.gpio,
            app.sensor.report_ms, app.sensor.pulses_per_litre,
-           app.sensor.pulses_per_litre > 0 ? "true" : "false",
-           app.diagnostics.self_test ? "true" : "false");
-    if (app.diagnostics.benchmark) flow_sensor_benchmark();
-    if (app.diagnostics.self_test)
-        flow_sensor_selftest(&app.sensor, app.diagnostics.test_gpio);
+           app.sensor.pulses_per_litre > 0 ? "true" : "false");
     flow_sensor_start(&app.sensor);
     flow_sensor_snapshot_t previous, current;
     flow_sensor_snapshot(&previous);
     ESP_ERROR_CHECK(wifi_start(&app.wifi));
+    ESP_ERROR_CHECK(wifi_cloud_start(&app.cloud));
     runtime_config_t runtime = {.sensor = app.sensor, .stream = app.cli.stream};
     commands = xQueueCreate(8, sizeof(cli_request_t));
     if (!commands) ESP_ERROR_CHECK(ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(cli_start(&app.cli, submit_command, NULL));
+    /* Wake the short acquisition work ahead of network formatting/TLS tasks. */
+    vTaskPrioritySet(NULL, 4);
     uint64_t total = previous.count;
     uint32_t counts[FLOW_SENSOR_WINDOW_CAPACITY] = {0};
     uint64_t times[FLOW_SENSOR_WINDOW_CAPACITY] = {0};
@@ -216,13 +246,13 @@ void app_main(void)
         uint32_t cycles = esp_cpu_get_cycle_count() - cycles_start;
         int64_t work_us = esp_timer_get_time() - work_start;
         int length = snprintf(reading, sizeof(reading),
-               "{\"type\":\"flow\",\"uptime_us\":%" PRId64 ",\"dt_us\":%" PRIu64 ","
+               "{\"type\":\"flow\",\"board\":\"%s\",\"gpio\":%d,\"uptime_us\":%" PRId64 ",\"dt_us\":%" PRIu64 ","
                "\"pulses\":%" PRIu32 ",\"total_pulses\":%" PRIu64 ",\"window_us\":%" PRIu64 ","
                "\"frequency_hz\":%.5f,\"flow_lpm\":%s,\"total_l\":%s,"
                "\"pulse\":%s,\"read_calc_format_us\":%" PRId64 ",\"read_calc_format_cycles\":%" PRIu32 ","
                "\"config_revision\":%" PRIu32 ",\"report_ms\":%" PRIu32 ",\"window_samples\":%u,"
                "\"pulses_per_litre\":%.9g}",
-               current.time_us, dt, delta, total, window_us, hz, rate, volume,
+               app.board_name, runtime.sensor.gpio, current.time_us, dt, delta, total, window_us, hz, rate, volume,
                pulse, work_us, cycles, runtime.revision, runtime.sensor.report_ms,
                runtime.sensor.window_samples, runtime.sensor.pulses_per_litre);
         if (length <= 0 || (size_t)length >= sizeof(reading))

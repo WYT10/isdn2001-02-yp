@@ -20,6 +20,7 @@ def create_app(test_config=None):
     app.config.from_mapping(
         DATABASE=str(Path(app.instance_path) / "flowlab.sqlite3"),
         SECRET_KEY=None, ADMIN_TOKEN=None, VIEWER_TOKEN=None, DEVICE_TOKEN=None,
+        PUBLIC_DASHBOARD=True,
         MAX_CONTENT_LENGTH=256 * 1024, SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=True,
         PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
@@ -41,7 +42,17 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
-        return render_template("dashboard.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else render_template("login.html")
+        if app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer"):
+            return render_template("living.html", role=session.get("role"))
+        return render_template("login.html")
+
+    @app.get("/login")
+    def login_page():
+        return render_template("login.html")
+
+    @app.get("/sensors")
+    def sensors():
+        return render_template("dashboard.html", role=session["role"]) if session.get("role") in ("admin", "viewer") else redirect(url_for("login_page"))
 
     @app.post("/login")
     def login():
@@ -80,8 +91,10 @@ def create_app(test_config=None):
     def response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "same-origin"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        map_page = request.path == "/living" or (request.path == "/" and (app.config["PUBLIC_DASHBOARD"] is True or session.get("role") in ("admin", "viewer")))
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin" if map_page else "same-origin"
+        images = "https://tile.openstreetmap.org" if map_page else ""
+        response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: {images}; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         if not request.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -99,12 +112,9 @@ def create_app(test_config=None):
 
     from .api import api
     app.register_blueprint(api)
-
-    @app.cli.command("seed-demo")
-    def seed_demo():
-        from .demo import seed
-        seed()
-        click.echo("Created labelled simulation data for demo-xiao. Existing real measurements were preserved.")
+    from .living import living
+    from . import activities
+    app.register_blueprint(living)
 
     @app.cli.command("backup-db")
     @click.argument("destination", type=click.Path())

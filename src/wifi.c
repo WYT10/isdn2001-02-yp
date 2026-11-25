@@ -3,18 +3,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_netif_sntp.h"
+#include "esp_mac.h"
+#include "esp_random.h"
+#include "cJSON.h"
 
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_eap_client.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include "lwip/sockets.h"
 
 #define CONNECTED BIT0
 #define DISCONNECTED BIT1
@@ -41,6 +49,222 @@ static struct {
 } state;
 static void escape_ssid(const unsigned char *input, char output[32 * 6 + 1]);
 
+enum { CLOUD_QUEUE_SIZE = 24, CLOUD_BATCH_SIZE = 24, CLOUD_SAMPLE_SIZE = 896,
+       CLOUD_BODY_SIZE = CLOUD_BATCH_SIZE * CLOUD_SAMPLE_SIZE + 256 };
+static QueueHandle_t cloud_queue;
+static wifi_cloud_settings_t cloud_settings;
+static struct {
+    uint64_t sequence, acknowledged, dropped;
+    uint32_t failures, pending;
+    int http_status;
+    bool clock_synced, blocked;
+    int64_t last_success_us;
+    char device_id[40], boot_id[33];
+} cloud;
+
+static void cloud_status(char *output, size_t capacity)
+{
+    portENTER_CRITICAL(&state_lock);
+    snprintf(output, capacity,
+        "{\"enabled\":%s,\"device_id\":\"%s\",\"boot_id\":\"%s\","
+        "\"acknowledged\":%" PRIu64 ",\"dropped\":%" PRIu64 ",\"pending\":%" PRIu32 ","
+        "\"failures\":%" PRIu32 ",\"http_status\":%d,\"blocked\":%s,\"clock_synced\":%s,"
+        "\"last_success_uptime_us\":%" PRId64 "}",
+        cloud_queue ? "true" : "false", cloud.device_id, cloud.boot_id,
+        cloud.acknowledged, cloud.dropped, cloud.pending, cloud.failures, cloud.http_status,
+        cloud.blocked ? "true" : "false", cloud.clock_synced ? "true" : "false", cloud.last_success_us);
+    portEXIT_CRITICAL(&state_lock);
+}
+
+static void clock_sync(struct timeval *tv)
+{
+    (void)tv;
+    portENTER_CRITICAL(&state_lock);
+    cloud.clock_synced = true;
+    portEXIT_CRITICAL(&state_lock);
+}
+
+/* One producer (sensor task); never wait for the network or a queue slot. */
+static void cloud_enqueue(const char *json, size_t length)
+{
+    if (!cloud_queue) return;
+    char sample[CLOUD_SAMPLE_SIZE], timestamp[80] = "";
+    portENTER_CRITICAL(&state_lock);
+    uint64_t seq = cloud.sequence++, dropped = cloud.dropped;
+    bool synced = cloud.clock_synced;
+    portEXIT_CRITICAL(&state_lock);
+    if (synced) {
+        struct timeval tv;
+        struct tm utc;
+        gettimeofday(&tv, NULL);
+        gmtime_r(&tv.tv_sec, &utc);
+        char date[24];
+        strftime(date, sizeof(date), "%Y-%m-%dT%H:%M:%S", &utc);
+        snprintf(timestamp, sizeof(timestamp), ",\"observed_at\":\"%s.%06ldZ\"", date, (long)tv.tv_usec);
+    }
+    int n = snprintf(sample, sizeof(sample),
+        "%.*s,\"seq\":%" PRIu64 ",\"upload_dropped\":%" PRIu64 ",\"queue_depth\":%u%s}",
+        (int)length - 1, json, seq, dropped, (unsigned)uxQueueMessagesWaiting(cloud_queue), timestamp);
+    if (n <= 0 || (size_t)n >= sizeof(sample) || xQueueSend(cloud_queue, sample, 0) != pdTRUE) {
+        portENTER_CRITICAL(&state_lock);
+        ++cloud.dropped;
+        portEXIT_CRITICAL(&state_lock);
+    }
+}
+
+typedef struct { char data[384]; size_t used; } cloud_response_t;
+
+static esp_err_t cloud_response(esp_http_client_event_t *event)
+{
+    cloud_response_t *response = event->user_data;
+    if (event->event_id == HTTP_EVENT_ON_DATA && event->data_len > 0) {
+        size_t available = sizeof(response->data) - response->used - 1;
+        size_t copy = (size_t)event->data_len < available ? (size_t)event->data_len : available;
+        memcpy(response->data + response->used, event->data, copy);
+        response->used += copy;
+        response->data[response->used] = 0;
+    }
+    return ESP_OK;
+}
+
+static void cloud_task(void *argument)
+{
+    (void)argument;
+    /* Leave handshake headroom: allocate the HTTP body only after Wi-Fi has an IP. */
+    char *body = NULL;
+    char sample[CLOUD_SAMPLE_SIZE];
+    unsigned count = 0, failures = 0;
+    size_t used = 0;
+    int64_t next_attempt = 0;
+    bool sntp_started = false;
+    cloud_response_t response;
+    esp_http_client_handle_t client = NULL;
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        portENTER_CRITICAL(&state_lock);
+        bool connected = state.station_connected, blocked = cloud.blocked;
+        portEXIT_CRITICAL(&state_lock);
+        if (!connected || blocked) {
+            if (client) { esp_http_client_cleanup(client); client = NULL; }
+            if (!count) { free(body); body = NULL; }
+            continue;
+        }
+        if (!sntp_started) {
+            esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("time.cloudflare.com");
+            config.sync_cb = clock_sync;
+            sntp_started = esp_netif_sntp_init(&config) == ESP_OK;
+        }
+        int64_t now = esp_timer_get_time();
+        if (now < next_attempt) continue;
+        if (!body) {
+            body = malloc(CLOUD_BODY_SIZE);
+            if (!body) {
+                portENTER_CRITICAL(&state_lock);
+                ++cloud.failures;
+                portEXIT_CRITICAL(&state_lock);
+                puts("{\"type\":\"cloud\",\"status\":\"allocation_failed\"}");
+                next_attempt = now + 5000000;
+                continue;
+            }
+        }
+        if (!count) {
+            used = snprintf(body, CLOUD_BODY_SIZE,
+                "{\"device_id\":\"%s\",\"label\":\"%s\",\"boot_id\":\"%s\",\"samples\":[",
+                cloud.device_id, cloud_settings.label, cloud.boot_id);
+            while (count < CLOUD_BATCH_SIZE && xQueueReceive(cloud_queue, sample, 0) == pdTRUE) {
+                used += snprintf(body + used, CLOUD_BODY_SIZE - used, "%s%s", count ? "," : "", sample);
+                ++count;
+            }
+            if (!count) continue;
+            used += snprintf(body + used, CLOUD_BODY_SIZE - used, "]}");
+            portENTER_CRITICAL(&state_lock);
+            cloud.pending = count;
+            portEXIT_CRITICAL(&state_lock);
+        }
+        memset(&response, 0, sizeof(response));
+        esp_http_client_config_t config = {
+            .url = cloud_settings.url, .method = HTTP_METHOD_POST,
+            .timeout_ms = cloud_settings.timeout_ms, .crt_bundle_attach = esp_crt_bundle_attach,
+            .disable_auto_redirect = true, .event_handler = cloud_response, .user_data = &response,
+            .keep_alive_enable = true,
+            .buffer_size = 1024, .buffer_size_tx = 1024,
+        };
+        if (!client) client = esp_http_client_init(&config);
+        esp_err_t result = ESP_ERR_NO_MEM;
+        int status = 0;
+        if (client) {
+            char authorization[136];
+            snprintf(authorization, sizeof(authorization), "Bearer %s", cloud_settings.device_token);
+            esp_http_client_set_header(client, "Authorization", authorization);
+            esp_http_client_set_header(client, "Content-Type", "application/json");
+            esp_http_client_set_post_field(client, body, used);
+            result = esp_http_client_perform(client);
+            status = esp_http_client_get_status_code(client);
+        }
+        bool accepted = false;
+        cJSON *reply = cJSON_Parse(response.data);
+        cJSON *inserted = cJSON_GetObjectItemCaseSensitive(reply, "inserted");
+        cJSON *duplicates = cJSON_GetObjectItemCaseSensitive(reply, "duplicates");
+        if (result == ESP_OK && (status == 200 || status == 201) &&
+            cJSON_IsNumber(inserted) && cJSON_IsNumber(duplicates) &&
+            inserted->valuedouble >= 0 && duplicates->valuedouble >= 0 &&
+            inserted->valuedouble + duplicates->valuedouble == count) accepted = true;
+        cJSON_Delete(reply);
+        if (!accepted && client) { esp_http_client_cleanup(client); client = NULL; }
+        portENTER_CRITICAL(&state_lock);
+        cloud.http_status = status;
+        if (accepted) {
+            cloud.acknowledged += count;
+            cloud.pending = 0;
+            cloud.last_success_us = esp_timer_get_time();
+        } else {
+            ++cloud.failures;
+            if (status == 400 || status == 401 || status == 403 || status == 409 ||
+                status == 404 || status == 413 || (status >= 300 && status < 400)) cloud.blocked = true;
+        }
+        portEXIT_CRITICAL(&state_lock);
+        printf("{\"type\":\"cloud\",\"status\":\"%s\",\"http_status\":%d,\"samples\":%u,"
+               "\"queued\":%u,\"code\":%d}\n", accepted ? "acknowledged" : "retry_pending",
+               status, count, (unsigned)uxQueueMessagesWaiting(cloud_queue), result);
+        if (accepted) { count = 0; failures = 0; }
+        else if (failures < 4) ++failures;
+        uint32_t delay = accepted ? cloud_settings.batch_interval_ms : (5000U << (failures - 1));
+        if (delay > 60000) delay = 60000;
+        next_attempt = (accepted ? now : esp_timer_get_time()) + (int64_t)delay * 1000;
+    }
+}
+
+esp_err_t wifi_cloud_start(const wifi_cloud_settings_t *config)
+{
+    if (!config) return ESP_ERR_INVALID_ARG;
+    if (!config->enabled) return ESP_OK;
+    if (cloud_queue || !config->url || strncmp(config->url, "https://", 8) ||
+        !config->device_token || strlen(config->device_token) < 16 || strlen(config->device_token) > 127 ||
+        !config->label || strspn(config->label, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ ") != strlen(config->label) ||
+        !config->label[0] || strlen(config->label) > 80 || config->batch_interval_ms < 500 ||
+        config->timeout_ms < 1000 || config->build_epoch < 1704067200) return ESP_ERR_INVALID_ARG;
+    cloud_settings = *config;
+    uint8_t mac[6], random[16];
+    NET_TRY(esp_read_mac(mac, ESP_MAC_WIFI_STA));
+    esp_fill_random(random, sizeof(random));
+    snprintf(cloud.device_id, sizeof(cloud.device_id), "esp32-%02x%02x%02x%02x%02x%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    for (unsigned i = 0; i < sizeof(random); ++i) snprintf(cloud.boot_id + i * 2, 3, "%02x", random[i]);
+    time_t current_time = time(NULL);
+    if (current_time < config->build_epoch) {
+        struct timeval seed = {.tv_sec = config->build_epoch};
+        settimeofday(&seed, NULL);
+    }
+    cloud_queue = xQueueCreate(CLOUD_QUEUE_SIZE, CLOUD_SAMPLE_SIZE);
+    if (!cloud_queue) return ESP_ERR_NO_MEM;
+    if (xTaskCreate(cloud_task, "cloud", 8192, NULL, 1, NULL) != pdPASS) {
+        vQueueDelete(cloud_queue);
+        cloud_queue = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
 esp_err_t wifi_request(wifi_action_t action)
 {
     if ((unsigned)action > WIFI_ACTION_STATUS) return ESP_ERR_INVALID_ARG;
@@ -65,6 +289,10 @@ static void wifi_log_status(void)
     ap_only = state.ap_only;
     memcpy(ip, state.station_ip, sizeof(ip));
     portEXIT_CRITICAL(&state_lock);
+    char upload[448];
+    cloud_status(upload, sizeof(upload));
+    printf("{\"type\":\"cloud_status\",\"cloud\":%s,\"queued\":%u}\n", upload,
+           cloud_queue ? (unsigned)uxQueueMessagesWaiting(cloud_queue) : 0);
     esp_err_t result = esp_wifi_get_mode(&mode);
     if (result == ESP_OK) {
         esp_wifi_get_channel(&channel, &secondary);
@@ -97,7 +325,7 @@ static const char dashboard[] =
 "<style>\n"
 ":root{color-scheme:dark;--bg:#10191d;--panel:#19272c;--line:#304348;--text:#edf5ed;--muted:#acc1bc;--green:#b5efb5;--amber:#ffcc86}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;padding:36px 24px;margin:auto}header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:28px}.eyebrow{color:var(--green);font-size:12px;letter-spacing:.12em;text-transform:uppercase}h1{font-size:clamp(28px,5vw,42px);letter-spacing:-.04em;margin:4px 0}h2{font-size:18px;margin:0 0 16px}p{margin:6px 0;color:var(--muted)}.badge{border:1px solid var(--line);border-radius:24px;padding:8px 14px;font-size:13px;white-space:nowrap;color:var(--amber)}.badge.live{color:var(--green)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px}.label{font-size:13px;color:var(--muted)}.value{font-size:clamp(24px,3.8vw,36px);font-variant-numeric:tabular-nums;letter-spacing:-.04em;overflow-wrap:anywhere;margin:8px 0 4px}.unit{font-size:13px;color:var(--muted)}.note{font-size:12px;color:var(--muted);min-height:18px}.panels{display:grid;grid-template-columns:1.6fr 1fr;gap:14px;margin-top:14px}svg{display:block;width:100%;height:160px;border-bottom:1px solid var(--line)}polyline{stroke:var(--green);stroke-width:2;vector-effect:non-scaling-stroke;fill:none}.chart-note{font-size:12px;margin-top:12px}dl{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0}dt{color:var(--muted);font-size:12px}dd{margin:2px 0 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}footer{margin-top:24px;font-size:13px;color:var(--muted)}a{color:var(--green)}#message{margin:0 0 20px;padding:12px 16px;border:1px solid var(--line);border-radius:12px;color:var(--muted)}@media(max-width:760px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panels{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column;gap:12px}main{padding:24px 16px}.card,.panel{padding:18px}}@media(prefers-reduced-motion:no-preference){.badge{transition:color .2s}}\n"
 "</style></head><body><main>\n"
-"<header><div><div class=\"eyebrow\">ZJ-S201C / XIAO ESP32-S3</div><h1>SensorLab Local</h1><p>Live pulse readings, directly from your board.</p></div><div id=\"badge\" class=\"badge\" role=\"status\">Connecting</div></header>\n"
+"<header><div><div class=\"eyebrow\" id=\"device\">ZJ-S201C / ESP32</div><h1>SensorLab Local</h1><p>Live pulse readings, directly from your board.</p></div><div id=\"badge\" class=\"badge\" role=\"status\">Connecting</div></header>\n"
 "<div id=\"message\" role=\"status\">Waiting for a reading from the board.</div>\n"
 "<section class=\"grid\" aria-label=\"Latest measurements\">\n"
 "<article class=\"card\"><div class=\"label\">Pulse frequency</div><div class=\"value\" id=\"frequency\">--</div><div class=\"unit\">Hz</div><div class=\"note\">Rolling measurement window</div></article>\n"
@@ -108,7 +336,7 @@ static const char dashboard[] =
 "<section class=\"panels\"><article class=\"panel\"><h2>Frequency history</h2><svg viewBox=\"0 0 600 160\" preserveAspectRatio=\"none\" role=\"img\" aria-label=\"Recent frequency readings\"><polyline id=\"trace\" points=\"\"></polyline></svg><p id=\"range\" class=\"chart-note\">Waiting for data</p><p class=\"chart-note\">Latest 60 browser samples. Polls once per second; pauses when this tab is hidden.</p></article>\n"
 "<article class=\"panel\"><h2>Signal details</h2><dl><div><dt>Duty cycle</dt><dd id=\"duty\">--</dd></div><div><dt>Pulse frequency</dt><dd id=\"edge-hz\">--</dd></div><div><dt>High time</dt><dd id=\"high\">--</dd></div><div><dt>Low time</dt><dd id=\"low\">--</dd></div><div><dt>Report interval</dt><dd id=\"interval\">--</dd></div><div><dt>Averaging window</dt><dd id=\"window\">--</dd></div></dl><p class=\"chart-note\">Timing is unavailable until enough edges arrive, and clears when the signal becomes stale.</p></article></section>\n"
 "<section class=\"panel\" style=\"margin-top:14px\"><h2>Connection</h2><dl><div><dt>Upstream Wi-Fi</dt><dd id=\"upstream\">--</dd></div><div><dt>Station address</dt><dd id=\"station-ip\">--</dd></div><div><dt>Local access point</dt><dd id=\"ap\">--</dd></div><div><dt>Data age</dt><dd id=\"age\">--</dd></div></dl><p class=\"chart-note\">A station IP confirms local network access. Internet access and cloud delivery are separate checks.</p></section>\n"
-"<footer>Input: D10 / GPIO9. Unknown calibration stays blank. <a href=\"/api/status\">JSON data</a> &middot; <a href=\"/healthz\">Health</a><p>This local page requires no Internet. The board does not forward Internet access to connected devices.</p></footer>\n"
+"<footer>Input: <span id=\"sensor-pin\">--</span>. Unknown calibration stays blank. <a href=\"/api/status\">JSON data</a> &middot; <a href=\"/healthz\">Health</a><p>This local page requires no Internet. The board does not forward Internet access to connected devices.</p></footer>\n"
 "</main><script>\n"
 "const el=id=>document.getElementById(id), finite=x=>typeof x==='number'&&Number.isFinite(x);\n"
 "const fmt=(x,n=2)=>finite(x)?x.toLocaleString(undefined,{maximumFractionDigits:n,minimumFractionDigits:n}):'--';\n"
@@ -122,6 +350,7 @@ static const char dashboard[] =
 " el('upstream').textContent=(n.ssid||'Wi-Fi')+(n.station_connected?' / IP obtained':' / waiting for IP');\n"
 " el('station-ip').textContent=n.station_ip||'--';el('ap').textContent=n.ap_active?(n.ap_ssid+' / '+n.ap_clients+' client(s)'):'Inactive';el('age').textContent=unit(age,'ms',0);\n"
 " if(!r)return;\n"
+" el('device').textContent='ZJ-S201C / '+(r.board||'ESP32');el('sensor-pin').textContent=finite(r.gpio)?'GPIO'+r.gpio:'--';\n"
 " el('frequency').textContent=fmt(r.frequency_hz);el('flow').textContent=fmt(r.flow_lpm,3);el('count').textContent=fmt(r.total_pulses,0);el('volume').textContent=fmt(r.total_l,3);\n"
 " el('calibration').textContent=finite(r.flow_lpm)?'Calibration configured':'Calibration needed';el('volume-note').textContent=finite(r.total_l)?'Per-boot total':'Calibration needed';\n"
 " const p=r.pulse||{};el('duty').textContent=unit(p.duty_pct,'%',1);el('edge-hz').textContent=unit(p.hz,'Hz',2);el('high').textContent=unit(p.high_us,'us');el('low').textContent=unit(p.low_us,'us');el('interval').textContent=unit(r.dt_us/1000,'ms');el('window').textContent=unit(r.window_us/1000,'ms');\n"
@@ -146,6 +375,7 @@ static const char dashboard[] =
 
 static const char *network_auth_label(void)
 {
+    if (settings.enterprise.enabled) return "wpa2_enterprise_peap";
     return settings.password[0] ? "wpa2_personal" : "open";
 }
 
@@ -171,6 +401,7 @@ esp_err_t wifi_publish_reading(const char *json, size_t length)
     state.reading[length] = '\0';
     state.reading_us = now;
     portEXIT_CRITICAL(&state_lock);
+    cloud_enqueue(json, length);
     return ESP_OK;
 }
 
@@ -231,14 +462,16 @@ static esp_err_t status_get(httpd_req_t *request)
     char age[32] = "null";
     if (reading[0])
         snprintf(age, sizeof(age), "%" PRId64, (esp_timer_get_time() - reading_us) / 1000);
-    char body[2048];
+    char upload[448];
+    cloud_status(upload, sizeof(upload));
+    char body[2560];
     int length = snprintf(body, sizeof(body),
         "{\"network\":{\"station_connected\":%s,\"ssid\":\"%s\",\"station_ip\":%s,"
         "\"rssi_dbm\":%s,\"ap_active\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":%s,"
-        "\"ap_clients\":%u,\"ap_only\":%s},\"reading_age_ms\":%s,\"reading\":%s}",
+        "\"ap_clients\":%u,\"ap_only\":%s},\"reading_age_ms\":%s,\"reading\":%s,\"cloud\":%s}",
         connected ? "true" : "false", target_ssid_json, address, rssi,
         ap_active ? "true" : "false", ap_ssid_json, ap_ip,
-        (unsigned)clients.num, ap_only ? "true" : "false", age, reading[0] ? reading : "null");
+        (unsigned)clients.num, ap_only ? "true" : "false", age, reading[0] ? reading : "null", upload);
     if (length < 0 || (size_t)length >= sizeof(body))
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Status too large");
     response_headers(request, "application/json");
@@ -272,45 +505,6 @@ static esp_err_t start_server(void)
     return ESP_OK;
 }
 
-/* Once per server start: exercise the actual handlers without relying on RF. */
-static bool check_route(const char *path, const char *expected)
-{
-    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock < 0) return false;
-    struct timeval timeout = {.tv_sec = 2};
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    struct sockaddr_in address = {.sin_family = AF_INET, .sin_port = htons(80)};
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    bool passed = false;
-    if (connect(sock, (struct sockaddr *)&address, sizeof(address)) == 0) {
-        char request[160];
-        int length = snprintf(request, sizeof(request),
-            "GET %s HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n", path);
-        if (send(sock, request, length, 0) == length) {
-            char response[3072] = {0}, block[512];
-            size_t used = 0, total = 0;
-            int received;
-            while ((received = recv(sock, block, sizeof(block), 0)) > 0) {
-                size_t copy = (size_t)received;
-                if (copy > sizeof(response) - 1 - used) copy = sizeof(response) - 1 - used;
-                memcpy(response + used, block, copy);
-                used += copy;
-                total += received;
-                response[used] = '\0';
-                passed = strstr(response, "200 OK") && strstr(response, expected);
-                const char *body = strstr(response, "\r\n\r\n");
-                const char *length_header = strstr(response, "Content-Length: ");
-                /* Drain the whole response before close, including the large page. */
-                if (body && length_header && total >= (size_t)(body + 4 - response) +
-                    strtoul(length_header + strlen("Content-Length: "), NULL, 10)) break;
-            }
-        }
-    }
-    close(sock);
-    return passed;
-}
-
 static void on_network_event(void *context, esp_event_base_t base, int32_t id, void *data)
 {
     (void)context;
@@ -336,8 +530,8 @@ static void on_network_event(void *context, esp_event_base_t base, int32_t id, v
         state.station_connected = true;
         portEXIT_CRITICAL(&state_lock);
         printf("{\"type\":\"wifi\",\"status\":\"connected\",\"ssid\":\"%s\","
-               "\"ip\":\"%s\",\"auth\":\"%s\",\"server_validation\":false}\n",
-               target_ssid_json, ip, network_auth_label());
+               "\"ip\":\"%s\",\"auth\":\"%s\",\"server_validation\":%s}\n",
+               target_ssid_json, ip, network_auth_label(), settings.enterprise.enabled ? "true" : "false");
         xEventGroupSetBits(events, CONNECTED);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
         portENTER_CRITICAL(&state_lock);
@@ -415,7 +609,8 @@ static esp_err_t initialise_network(void)
     NET_TRY(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     wifi_config_t config = {
         .sta = {
-            .threshold.authmode = settings.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
+            .threshold.authmode = settings.enterprise.enabled ? WIFI_AUTH_WPA2_ENTERPRISE :
+                                  settings.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
             .scan_method = WIFI_ALL_CHANNEL_SCAN,
             .pmf_cfg = {.capable = true, .required = false},
         },
@@ -424,6 +619,24 @@ static esp_err_t initialise_network(void)
     memcpy(config.sta.password, settings.password, strlen(settings.password));
     NET_TRY(esp_wifi_set_mode(settings.fallback.enabled ? WIFI_MODE_APSTA : WIFI_MODE_STA));
     NET_TRY(esp_wifi_set_config(WIFI_IF_STA, &config));
+    if (settings.enterprise.enabled) {
+        const wifi_enterprise_settings_t *enterprise = &settings.enterprise;
+        struct timeval clock;
+        gettimeofday(&clock, NULL);
+        if (clock.tv_sec < enterprise->build_epoch) {
+            clock.tv_sec = enterprise->build_epoch;
+            clock.tv_usec = 0;
+            if (settimeofday(&clock, NULL)) return ESP_FAIL;
+        }
+        NET_TRY(esp_eap_client_set_identity((const unsigned char *)enterprise->identity, strlen(enterprise->identity)));
+        NET_TRY(esp_eap_client_set_username((const unsigned char *)enterprise->username, strlen(enterprise->username)));
+        NET_TRY(esp_eap_client_set_password((const unsigned char *)enterprise->password, strlen(enterprise->password)));
+        NET_TRY(esp_eap_client_set_eap_methods(ESP_EAP_TYPE_PEAP));
+        NET_TRY(esp_eap_client_use_default_cert_bundle(true));
+        NET_TRY(esp_eap_client_set_domain_name(enterprise->server_domain));
+        NET_TRY(esp_eap_client_set_disable_time_check(false));
+        NET_TRY(esp_wifi_sta_enterprise_enable());
+    }
     if (settings.fallback.enabled) {
         wifi_config_t ap = {
             .ap = {
@@ -481,7 +694,8 @@ static void network_task(void *context)
         return;
     }
     printf("{\"type\":\"wifi\",\"status\":\"starting\",\"ssid\":\"%s\","
-           "\"auth\":\"%s\",\"server_validation\":false}\n", target_ssid_json, network_auth_label());
+           "\"auth\":\"%s\",\"server_validation\":%s}\n", target_ssid_json, network_auth_label(),
+           settings.enterprise.enabled ? "true" : "false");
     esp_err_t err = initialise_network();
     if (err != ESP_OK) {
         printf("{\"type\":\"wifi\",\"status\":\"setup_error\",\"code\":%d}\n", err);
@@ -504,7 +718,7 @@ static void network_task(void *context)
         printf("{\"type\":\"wifi_scan\",\"status\":\"error\",\"code\":%d}\n", err);
     unsigned attempts = 0;
     int64_t next_connect_us = esp_timer_get_time(), next_fallback_us = 0;
-    bool ap_started = false, checked_server = false, ap_only = false;
+    bool ap_started = false, ap_only = false;
     while (true) {
         EventBits_t bits = xEventGroupWaitBits(events, CONNECTED | DISCONNECTED | LOST_IP,
                                               pdTRUE, pdFALSE, pdMS_TO_TICKS(250));
@@ -603,16 +817,7 @@ static void network_task(void *context)
                 printf("{\"type\":\"local_http\",\"status\":\"start_error\",\"code\":%d}\n", err);
             }
         }
-        if (server && !checked_server) {
-            bool health = check_route("/healthz", "\"status\":\"ok\"");
-            bool status = check_route("/api/status", "\"reading\":{\"type\":\"flow\"");
-            bool page = check_route("/", "SensorLab Local");
-            printf("{\"type\":\"local_http_check\",\"scope\":\"board_loopback\","
-                   "\"health\":%s,\"status\":%s,\"page\":%s,\"pass\":%s}\n",
-                   health ? "true" : "false", status ? "true" : "false",
-                   page ? "true" : "false", health && status && page ? "true" : "false");
-            checked_server = true;
-        }
+
     }
 }
 
@@ -628,6 +833,12 @@ esp_err_t wifi_start(const wifi_settings_t *config)
     if (!config || !valid_credentials(config->ssid, config->password, true) ||
         !pdMS_TO_TICKS(config->retry_delay_ms) || !pdMS_TO_TICKS(config->status_interval_ms))
         return ESP_ERR_INVALID_ARG;
+    if (config->enterprise.enabled &&
+        (!config->enterprise.identity[0] || !memchr(config->enterprise.identity, 0, sizeof(config->enterprise.identity)) ||
+         !config->enterprise.username[0] || !memchr(config->enterprise.username, 0, sizeof(config->enterprise.username)) ||
+         !config->enterprise.password[0] || !memchr(config->enterprise.password, 0, sizeof(config->enterprise.password)) ||
+         !config->enterprise.server_domain[0] || !memchr(config->enterprise.server_domain, 0, sizeof(config->enterprise.server_domain)) ||
+         config->enterprise.build_epoch < 1704067200)) return ESP_ERR_INVALID_ARG;
     if (config->fallback.enabled &&
         (!valid_credentials(config->fallback.ssid, config->fallback.password, false) ||
          !config->fallback.after_ms || !pdMS_TO_TICKS(config->fallback.retry_delay_ms) ||
