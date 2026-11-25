@@ -1,6 +1,6 @@
 # LiveGreen
 
-ESP32 sensor firmware, a Flask API with SQLite, and a web dashboard.
+ESP32 sensor firmware, a Flask API with SQLite, a web dashboard and a Flutter Android app.
 
 **Current board:** ESP32-S3 dev kit · GPIO10 · 4 MB flash · native USB serial. Default branch: `main`.
 
@@ -11,6 +11,7 @@ src/          main.c, wifi.c, flow_sensor.c, cli.c
 include/      firmware headers
 components/   cJSON runtime dependency
 web/          Flask backend, database schema and dashboard
+mobile/       Flutter Android activity logging and receipt recognition
 tools/        serial commands, private configuration and deployment
 .github/      firmware build and website packaging
 ```
@@ -59,7 +60,15 @@ python tools/deploy_pythonanywhere.py check
 
 Upload `dist/pythonanywhere-starter.zip` into PythonAnywhere `~/mysite/` and extract the whole package. Configure WSGI using `web/wsgi.py`. For API updates, use the existing private `.local/pythonanywhere.json` with `auth` and `deploy` actions. The updater snapshots source and verifies the running release/database; it does not reset research data.
 
-The website owns the API, database, dashboard and formulas. A separate mobile app will use `app_ref` as its UI reference and connect to this backend; native capture needs platform-specific implementation. Data quality, extraction feasibility and research-backed factors come first. Activity accounts currently use independently scoped keys provisioned by an administrator; self-service sign-up and the native app are future work.
+The website owns the API, database, dashboard and formulas. The Android app connects with an independently scoped key provisioned by an administrator. Self-service sign-up, notification/GPS tracking and receipt bots are future work.
+
+## Android app
+
+Install Flutter stable 3.50.1 and Android Studio's SDK tools (app NDK: 30.0.16248370). Enable USB debugging on your phone. From `mobile/`, run `flutter pub get` then `flutter run`. The default server is the public site; it needs the schema-2 backend deployed before these APIs work there.
+
+For the existing local preview, run `adb reverse tcp:5052 tcp:5052`, then `flutter run --dart-define=API_BASE=http://127.0.0.1:5052` from `mobile/`. Keep USB connected and the Flask preview running. In **You**, connect an activity account key; it is stored using Android secure storage, never embedded in the APK. Read-only demo works without a key.
+
+**Home / Activities / Footprint / You:** log and correct purchases, journeys, water and electricity; review daily totals and sources. Camera/gallery receipt recognition supports Chinese/Latin text on-device. Review text and enter items before saving; purchase time stays unknown until confirmed. Photos are not uploaded. This version requires a connection to save; failed saves remain in the open form. No automatic notification reading, screen capture, background GPS, rewards or chat are implemented.
 
 ## Activity data
 

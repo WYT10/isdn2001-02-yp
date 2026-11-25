@@ -1,6 +1,7 @@
 """Project saved activities into the approved dashboard's presentation contract."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import math
+from zoneinfo import ZoneInfo
 
 from flask import abort, jsonify, request, session
 
@@ -44,10 +45,16 @@ def activity_preview(body):
     account_id=session.get("activity_account_id",store.DEMO)
     owner=store.account(account_id)
     days={"week":7,"fortnight":14,"month":28}[period]
-    end=date(2026,11,22)
+    saved=store.records(account_id)
+    if account_id == store.DEMO:
+        end=date(2026,11,22)
+    elif owner["is_demo"]:
+        end=max((date.fromisoformat(r["local_date"]) for r in saved if r["local_date"]), default=date(2026,11,22))
+    else:
+        end=datetime.now(ZoneInfo("Asia/Hong_Kong")).date()
     start=end-timedelta(days=days-1)
     ref_end,ref_start=start-timedelta(days=1),start-timedelta(days=days)
-    all_rows=[display(r) for r in store.records(account_id) if r["status"]!="excluded"]
+    all_rows=[display(r) for r in saved if r["status"]!="excluded"]
     in_scope=lambda r:scope=="all" or r["scope"]==scope
     selected=[r for r in all_rows if r["date"] and start.isoformat()<=r["date"]<=end.isoformat() and in_scope(r)]
     reference=[r for r in all_rows if r["date"] and ref_start.isoformat()<=r["date"]<=ref_end.isoformat() and in_scope(r)]
